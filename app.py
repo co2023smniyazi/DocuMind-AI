@@ -75,6 +75,36 @@ if "llm_provider" not in st.session_state:
     st.session_state["llm_provider"] = get_secret("LLM_PROVIDER", "gemini").lower()
 
 
+# Production Cloud Persistence Enforcement Guard
+_v_prov = (get_secret("VECTOR_PROVIDER") or get_secret("VECTOR_STORE_PROVIDER") or "").lower()
+_is_cloud = bool(
+    os.environ.get("STREAMLIT_SHARING_HOST")
+    or os.environ.get("STREAMLIT_SERVER_PORT")
+    or get_secret("IS_STREAMLIT_CLOUD") == "true"
+)
+
+if _v_prov == "qdrant" or (_is_cloud and _v_prov not in ["chroma", "memory"]):
+    _q_url = get_secret("QDRANT_URL")
+    _q_key = get_secret("QDRANT_API_KEY")
+    if not _q_url or not _q_key:
+        st.error(
+            "🛑 **Blocking Configuration Error: Missing Qdrant Cloud Credentials**\n\n"
+            "The application is running in production cloud mode requiring persistent vector storage, "
+            "but `QDRANT_URL` or `QDRANT_API_KEY` is not configured in Streamlit Secrets.\n\n"
+            "**Why this is blocked:** Streamlit Community Cloud containers are ephemeral and hibernate after 12 hours. "
+            "Without persistent Qdrant Cloud storage, indexed vectors would be lost on container restart.\n\n"
+            "**Action Required:**\n"
+            "1. In **share.streamlit.io** -> App Settings -> **Secrets**, configure:\n"
+            "```toml\n"
+            "VECTOR_PROVIDER = \"qdrant\"\n"
+            "QDRANT_URL = \"https://your-cluster-id.region.cloud.qdrant.io:6333\"\n"
+            "QDRANT_API_KEY = \"your-qdrant-api-key\"\n"
+            "```\n"
+            "*(For local offline development, set `VECTOR_PROVIDER = 'chroma'`)*"
+        )
+        st.stop()
+
+
 @st.cache_resource(show_spinner=False)
 def get_cached_rag(provider: str):
     rag = RAGService(llm_provider=provider)
@@ -384,41 +414,55 @@ with tab3:
     st.markdown("#### 🚀 Jira Workflow State")
     st.code("TO DO  ➡️  IN PROGRESS  ➡️  CODE REVIEW  ➡️  TESTING  ➡️  DONE", language="text")
 
-    # Epics overview loaded dynamically
+    # Epics overview loaded dynamically from status.json (defaults to TO DO)
     epics_data = jira_info.get("epics", [
-        {"epic_id": "EPIC-1", "name": "Requirements and Dataset", "status": "DONE", "story_points": 11},
-        {"epic_id": "EPIC-2", "name": "LLM & Cloud Setup", "status": "DONE", "story_points": 10},
-        {"epic_id": "EPIC-3", "name": "RAG Pipeline & Claude AI", "status": "DONE", "story_points": 42},
-        {"epic_id": "EPIC-4", "name": "User Interface & Cloud Hosting", "status": "IN PROGRESS", "story_points": 13},
-        {"epic_id": "EPIC-5", "name": "Testing and Evaluation", "status": "IN PROGRESS", "story_points": 15},
-        {"epic_id": "EPIC-6", "name": "Documentation and Demonstration", "status": "IN PROGRESS", "story_points": 5},
+        {"epic_id": "EPIC-1", "name": "Document Ingestion & Extraction", "status": "TO DO", "story_points": 13},
+        {"epic_id": "EPIC-2", "name": "Semantic Chunking & Vector Indexing", "status": "TO DO", "story_points": 18},
+        {"epic_id": "EPIC-3", "name": "Cloud-Native Embedding & Vector Storage", "status": "TO DO", "story_points": 21},
+        {"epic_id": "EPIC-4", "name": "LLM Integration, Fallback & Grounded Generation", "status": "TO DO", "story_points": 21},
+        {"epic_id": "EPIC-5", "name": "Testing, Safe Refusal & Benchmark Evaluation", "status": "TO DO", "story_points": 18},
+        {"epic_id": "EPIC-6", "name": "Cloud Deployment, CI/CD & Security", "status": "TO DO", "story_points": 18},
     ])
     st.dataframe(pd.DataFrame(epics_data), use_container_width=True)
 
-    st.markdown("#### 📅 Sprint Breakdown")
+    st.markdown("#### 📅 Sprint Breakdown (Tracked in `jira_management/jira_import.csv`)")
     sprint_tabs = st.tabs(["Sprint 1: Foundation", "Sprint 2: RAG Pipeline", "Sprint 3: Cloud & Claude", "Sprint 4: Evaluation & Demo"])
 
     with sprint_tabs[0]:
         st.markdown("""
-        - `RAG-1` Define functional requirements (Story - 3 SP) ✅ DONE
-        - `RAG-2` Collect college documents (Task - 3 SP) ✅ DONE
-        - `RAG-3` Prepare 50 sample questions (Task - 5 SP) ✅ DONE
-        - `RAG-4` Setup LLM environment (Task - 2 SP) ✅ DONE
-        - `RAG-5` Run and test baseline LLM (Task - 3 SP) ✅ DONE
+        - `RAG-1` Define functional requirements (Story - 3 SP) `[TO DO]`
+        - `RAG-2` Collect college documents (Task - 3 SP) `[TO DO]`
+        - `RAG-3` Prepare 50 sample questions (Task - 5 SP) `[TO DO]`
+        - `RAG-4` Setup LLM environment (Task - 2 SP) `[TO DO]`
+        - `RAG-5` Run and test baseline LLM (Task - 3 SP) `[TO DO]`
         """)
 
     with sprint_tabs[1]:
         st.markdown("""
-        - `RAG-6` Develop PDF text extractor (Story - 3 SP) ✅ DONE
-        - `RAG-7` Develop text chunking module (Story - 3 SP) ✅ DONE
-        - `RAG-8` Generate vector embeddings (Story - 5 SP) ✅ DONE
-        - `RAG-9` Create vector database (Story - 5 SP) ✅ DONE
-        - `RAG-10` Develop semantic retrieval (Story - 5 SP) ✅ DONE
+        - `RAG-6` Develop PDF text extractor (Story - 3 SP) `[TO DO]`
+        - `RAG-7` Develop text chunking module (Story - 3 SP) `[TO DO]`
+        - `RAG-8` Generate vector embeddings (Story - 5 SP) `[TO DO]`
+        - `RAG-9` Create vector database (Story - 5 SP) `[TO DO]`
+        - `RAG-10` Develop semantic retrieval (Story - 5 SP) `[TO DO]`
         """)
 
     with sprint_tabs[2]:
         st.markdown("""
-        - `RAG-11` Integrate retrieved context with LLM (Story - 5 SP) ✅ DONE
+        - `RAG-11` Integrate retrieved context with LLM (Story - 5 SP) `[TO DO]`
+        - `RAG-12` Implement hallucination prevention (Story - 5 SP) `[TO DO]`
+        - `RAG-13` Add source document citation (Story - 3 SP) `[TO DO]`
+        - `RAG-14` Integrate Google Gemini Cloud LLM (Story - 5 SP) `[TO DO]`
+        - `RAG-15` FastEmbed ONNX local embedder (Story - 5 SP) `[TO DO]`
+        """)
+
+    with sprint_tabs[3]:
+        st.markdown("""
+        - `RAG-16` Qdrant Cloud vector database integration (Story - 5 SP) `[TO DO]`
+        - `RAG-17` Run automated 50-question benchmark (Story - 5 SP) `[TO DO]`
+        - `RAG-18` Implement multi-metric evaluation (Story - 5 SP) `[TO DO]`
+        - `RAG-19` Setup Streamlit Cloud deployment (Story - 3 SP) `[TO DO]`
+        - `RAG-20` Cloud health check diagnostic page (Story - 3 SP) `[TO DO]`
+        """)
         - `RAG-12` Develop RAG prompt with anti-hallucination (Story - 3 SP) ✅ DONE
         - `RAG-13` Implement source citation (Story - 3 SP) ✅ DONE
         - `RAG-14` Implement unknown-answer handling (Story - 3 SP) ✅ DONE
@@ -513,41 +557,55 @@ with tab3:
     st.markdown("#### 🚀 Jira Workflow State")
     st.code("TO DO  ➡️  IN PROGRESS  ➡️  CODE REVIEW  ➡️  TESTING  ➡️  DONE", language="text")
 
-    # Epics overview loaded dynamically
+    # Epics overview loaded dynamically from status.json (defaults to TO DO)
     epics_data = jira_info.get("epics", [
-        {"epic_id": "EPIC-1", "name": "Requirements and Dataset", "status": "DONE", "story_points": 11},
-        {"epic_id": "EPIC-2", "name": "LLM & Cloud Setup", "status": "DONE", "story_points": 10},
-        {"epic_id": "EPIC-3", "name": "RAG Pipeline & Claude AI", "status": "DONE", "story_points": 42},
-        {"epic_id": "EPIC-4", "name": "User Interface & Cloud Hosting", "status": "IN PROGRESS", "story_points": 13},
-        {"epic_id": "EPIC-5", "name": "Testing and Evaluation", "status": "IN PROGRESS", "story_points": 15},
-        {"epic_id": "EPIC-6", "name": "Documentation and Demonstration", "status": "IN PROGRESS", "story_points": 5},
+        {"epic_id": "EPIC-1", "name": "Document Ingestion & Extraction", "status": "TO DO", "story_points": 13},
+        {"epic_id": "EPIC-2", "name": "Semantic Chunking & Vector Indexing", "status": "TO DO", "story_points": 18},
+        {"epic_id": "EPIC-3", "name": "Cloud-Native Embedding & Vector Storage", "status": "TO DO", "story_points": 21},
+        {"epic_id": "EPIC-4", "name": "LLM Integration, Fallback & Grounded Generation", "status": "TO DO", "story_points": 21},
+        {"epic_id": "EPIC-5", "name": "Testing, Safe Refusal & Benchmark Evaluation", "status": "TO DO", "story_points": 18},
+        {"epic_id": "EPIC-6", "name": "Cloud Deployment, CI/CD & Security", "status": "TO DO", "story_points": 18},
     ])
     st.dataframe(pd.DataFrame(epics_data), use_container_width=True)
 
-    st.markdown("#### 📅 Sprint Breakdown")
+    st.markdown("#### 📅 Sprint Breakdown (Tracked in `jira_management/jira_import.csv`)")
     sprint_tabs = st.tabs(["Sprint 1: Foundation", "Sprint 2: RAG Pipeline", "Sprint 3: Cloud & Claude", "Sprint 4: Evaluation & Demo"])
 
     with sprint_tabs[0]:
         st.markdown("""
-        - `RAG-1` Define functional requirements (Story - 3 SP) ✅ DONE
-        - `RAG-2` Collect college documents (Task - 3 SP) ✅ DONE
-        - `RAG-3` Prepare 50 sample questions (Task - 5 SP) ✅ DONE
-        - `RAG-4` Setup LLM environment (Task - 2 SP) ✅ DONE
-        - `RAG-5` Run and test baseline LLM (Task - 3 SP) ✅ DONE
+        - `RAG-1` Define functional requirements (Story - 3 SP) `[TO DO]`
+        - `RAG-2` Collect college documents (Task - 3 SP) `[TO DO]`
+        - `RAG-3` Prepare 50 sample questions (Task - 5 SP) `[TO DO]`
+        - `RAG-4` Setup LLM environment (Task - 2 SP) `[TO DO]`
+        - `RAG-5` Run and test baseline LLM (Task - 3 SP) `[TO DO]`
         """)
 
     with sprint_tabs[1]:
         st.markdown("""
-        - `RAG-6` Develop PDF text extractor (Story - 3 SP) ✅ DONE
-        - `RAG-7` Develop text chunking module (Story - 3 SP) ✅ DONE
-        - `RAG-8` Generate vector embeddings (Story - 5 SP) ✅ DONE
-        - `RAG-9` Create vector database (Story - 5 SP) ✅ DONE
-        - `RAG-10` Develop semantic retrieval (Story - 5 SP) ✅ DONE
+        - `RAG-6` Develop PDF text extractor (Story - 3 SP) `[TO DO]`
+        - `RAG-7` Develop text chunking module (Story - 3 SP) `[TO DO]`
+        - `RAG-8` Generate vector embeddings (Story - 5 SP) `[TO DO]`
+        - `RAG-9` Create vector database (Story - 5 SP) `[TO DO]`
+        - `RAG-10` Develop semantic retrieval (Story - 5 SP) `[TO DO]`
         """)
 
     with sprint_tabs[2]:
         st.markdown("""
-        - `RAG-11` Integrate retrieved context with LLM (Story - 5 SP) ✅ DONE
+        - `RAG-11` Integrate retrieved context with LLM (Story - 5 SP) `[TO DO]`
+        - `RAG-12` Implement hallucination prevention (Story - 5 SP) `[TO DO]`
+        - `RAG-13` Add source document citation (Story - 3 SP) `[TO DO]`
+        - `RAG-14` Integrate Google Gemini Cloud LLM (Story - 5 SP) `[TO DO]`
+        - `RAG-15` FastEmbed ONNX local embedder (Story - 5 SP) `[TO DO]`
+        """)
+
+    with sprint_tabs[3]:
+        st.markdown("""
+        - `RAG-16` Qdrant Cloud vector database integration (Story - 5 SP) `[TO DO]`
+        - `RAG-17` Run automated 50-question benchmark (Story - 5 SP) `[TO DO]`
+        - `RAG-18` Implement multi-metric evaluation (Story - 5 SP) `[TO DO]`
+        - `RAG-19` Setup Streamlit Cloud deployment (Story - 3 SP) `[TO DO]`
+        - `RAG-20` Cloud health check diagnostic page (Story - 3 SP) `[TO DO]`
+        """)
         - `RAG-12` Develop RAG prompt with anti-hallucination (Story - 3 SP) ✅ DONE
         - `RAG-13` Implement source citation (Story - 3 SP) ✅ DONE
         - `RAG-14` Implement unknown-answer handling (Story - 3 SP) ✅ DONE

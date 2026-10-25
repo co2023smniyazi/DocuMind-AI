@@ -62,21 +62,30 @@ def benchmark_cold_start():
     return init_latency, embedder
 
 
-def benchmark_ingestion_and_retrieval(corpus_sizes: List[int], embedder, runs_per_size: int = 50):
+def benchmark_ingestion_and_retrieval(corpus_sizes: List[int], embedder, runs_per_size: int = 50, vector_store_type: str = "chroma"):
     """Measures ingestion throughput and retrieval latency percentiles."""
     results = []
 
     for size in corpus_sizes:
-        print(f"\n--- Testing Corpus Size: {size} Chunks ---")
+        print(f"\n--- Testing Corpus Size: {size} Chunks ({vector_store_type.upper()}) ---")
         temp_dir = tempfile.mkdtemp(prefix="bench_chroma_")
 
         try:
             chunks = generate_synthetic_chunks(size)
-            store = ChromaVectorStore(
-                persist_directory=temp_dir,
-                collection_name=f"bench_{size}",
-                embedding_dimension=embedder.dimension
-            )
+            if vector_store_type == "qdrant":
+                q_url = os.environ.get("QDRANT_URL")
+                q_key = os.environ.get("QDRANT_API_KEY")
+                if not q_url:
+                    print("QDRANT_URL not set; running in-memory Qdrant mode (:memory:)")
+                    store = QdrantCloudVectorStore(url=":memory:", collection_name=f"bench_{size}", embedding_dimension=embedder.dimension)
+                else:
+                    store = QdrantCloudVectorStore(url=q_url, api_key=q_key, collection_name=f"bench_{size}", embedding_dimension=embedder.dimension)
+            else:
+                store = ChromaVectorStore(
+                    persist_directory=temp_dir,
+                    collection_name=f"bench_{size}",
+                    embedding_dimension=embedder.dimension
+                )
 
             # Ingestion Throughput Measurement
             t_ingest_start = time.time()
@@ -128,6 +137,11 @@ def benchmark_ingestion_and_retrieval(corpus_sizes: List[int], embedder, runs_pe
             })
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
+            if vector_store_type == "qdrant":
+                try:
+                    store.reset_collection()
+                except Exception:
+                    pass
 
     return results
 
@@ -136,14 +150,16 @@ def main():
     parser = argparse.ArgumentParser(description="DocuMind-AI Benchmark Runner")
     parser.add_argument("--sizes", nargs="+", type=int, default=[250, 500, 1000], help="Corpus sizes to test")
     parser.add_argument("--queries", type=int, default=50, help="Number of test queries per size")
+    parser.add_argument("--vector-store", type=str, default="chroma", choices=["chroma", "qdrant", "memory"], help="Vector store backend to benchmark")
     args = parser.parse_args()
 
     print("=" * 70)
     print("DOCUMIND-AI SYSTEM PERFORMANCE & SCALABILITY BENCHMARK")
+    print(f"Backend Vector Store: {args.vector_store.upper()}")
     print("=" * 70)
 
     cold_start, embedder = benchmark_cold_start()
-    results = benchmark_ingestion_and_retrieval(args.sizes, embedder, runs_per_size=args.queries)
+    results = benchmark_ingestion_and_retrieval(args.sizes, embedder, runs_per_size=args.queries, vector_store_type=args.vector_store)
 
     print("\n" + "=" * 70)
     print("FINAL BENCHMARK RESULTS SUMMARY")

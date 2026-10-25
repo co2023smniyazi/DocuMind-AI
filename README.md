@@ -59,13 +59,13 @@ All limits have been verified against official platform documentation as of Octo
 
 | Platform | Role | SDK / Integration | Free-Tier Limits & Quotas | Verified Doc URL |
 |---|---|---|---|---|
-| **Streamlit Community Cloud** | Production Web Hosting | Web Platform | ₹0 (1 GB RAM / app, sleeps after 7 days inactivity) | [Streamlit Limits](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app#app-resource-limits) |
-| **Google Gemini API** | Primary Cloud LLM | `google-genai` | ₹0 (15 RPM, 1M TPM, 1,500 RPD) | [Gemini Pricing](https://ai.google.dev/pricing) |
-| **Groq Cloud** | Secondary Cloud LLM | `groq` | ₹0 (30 RPM, 6k TPM, 14,400 RPD) | [Groq Rate Limits](https://console.groq.com/docs/rate-limits) |
-| **FastEmbed (ONNX)** | Semantic Embeddings | `fastembed` | ₹0 (In-container, 384 dims, ~67 MB weights, ~145 MB RAM) | [FastEmbed Docs](https://qdrant.github.io/fastembed/) |
-| **Qdrant Cloud** | Cloud Vector DB | `qdrant-client` | ₹0 (1 GB permanent free cluster, suspends after 7 days inactivity) | [Qdrant Pricing](https://qdrant.tech/pricing/) |
+| **Streamlit Community Cloud** | Production Web Hosting | Web Platform | ₹0 (Dynamic ~1.0 GB RAM [690MB–2.7GB], sleeps after **12 hours** inactivity) | [Streamlit Limits](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app#app-resource-limits) |
+| **Google Gemini API** | Primary Cloud LLM | `google-genai` | ₹0 (15 RPM, 1M TPM, 1,500 RPD for `gemini-2.0-flash`) | [Gemini Pricing](https://ai.google.dev/pricing) |
+| **Groq Cloud** | Secondary Cloud LLM | `groq` | ₹0 (30 RPM, 12k TPM, 1,000 RPD for `llama-3.3-70b`) | [Groq Rate Limits](https://console.groq.com/docs/rate-limits) |
+| **FastEmbed (ONNX)** | Semantic Embeddings | `fastembed` | ₹0 (In-process, 384 dims, ~67 MB weights, ~145 MB process RAM) | [FastEmbed Docs](https://qdrant.github.io/fastembed/) |
+| **Qdrant Cloud** | Cloud Vector DB | `qdrant-client` | ₹0 (1 GB RAM, 4 GB Disk; suspends after **1 week**, deleted after **4 weeks**) | [Qdrant Pricing](https://qdrant.tech/pricing/) |
 | **ChromaDB** | Local / Offline Vector DB | `chromadb` | ₹0 (Local disk storage for development & CI fallback) | Local |
-| **GitHub Actions** | Source Control & CI/CD | GitHub Actions | ₹0 (Unlimited public mins / 2,000 private mins/mo) | [GitHub Billing](https://docs.github.com/en/billing) |
+| **GitHub Actions** | Source Control & CI/CD | GitHub Actions | ₹0 (Unlimited public mins / 2,000 private mins/mo on Linux) | [GitHub Billing](https://docs.github.com/en/billing) |
 | **Anthropic Claude** | Optional Cloud LLM | `anthropic` | Paid API (Disabled by default: `ENABLE_CLAUDE=false`) | [Anthropic Pricing](https://www.anthropic.com/pricing) |
 | **Jira Cloud** | Agile Scrum Management | Atlassian Scrum | ₹0 (Free up to 10 users; 6 Epics, 25 User Stories) | [Jira Pricing](https://www.atlassian.com/software/jira/pricing) |
 
@@ -145,9 +145,11 @@ D:\New folder\cc project 3\
 
 ---
 
-## 4. Empirical Performance Benchmarks
+## 4. Empirical Performance Benchmarks (Local Workstation Measurements)
 
-Measured on 2026-10-25 using `python scripts/benchmark.py --sizes 250 500 1000 --queries 30`:
+> [!NOTE]
+> Measured **locally on a Windows 11 PC (Python 3.11.9)** on 2026-10-25 using `python scripts/benchmark.py --sizes 250 500 1000 --queries 30 --vector-store chroma`.  
+> These numbers reflect local SSD and in-process ONNX execution without network latency to Qdrant Cloud or external LLMs, tested up to 1,000 chunks.
 
 | Corpus Size (Chunks) | Ingestion Duration (s) | Ingestion Throughput | P50 Latency (ms) | P90 Latency (ms) | P99 Latency (ms) |
 |---|---|---|---|---|---|
@@ -155,9 +157,9 @@ Measured on 2026-10-25 using `python scripts/benchmark.py --sizes 250 500 1000 -
 | **500** | 8.020 s | **62.3 ch/s** | 16.05 ms | 20.78 ms | 21.30 ms |
 | **1000** | 16.887 s | **59.2 ch/s** | 20.81 ms | 25.42 ms | 27.23 ms |
 
-- **Cold-Start Time**: **1.150 seconds** (FastEmbed ONNX weight initialization)
-- **Container Memory Footprint**: **~145 MB** (Well within Streamlit Cloud's 1 GB ceiling)
-- **Answer Cache Speedup**: **< 2 ms** for cached repeat queries
+- **Cold-Start Time**: **1.150 seconds** (FastEmbed ONNX session initialization)
+- **Local Process Memory Footprint**: **~145 MB** (measured for the active Python benchmark process)
+- **Answer Cache Speedup**: **< 2 ms** for cached repeat queries (in-memory)
 
 ---
 

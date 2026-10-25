@@ -104,7 +104,8 @@ def run_evaluation(
     vector_store_type: Optional[str] = "chroma",
     top_k: int = 4,
     allow_mock: bool = False,
-    output_dir: str = "evaluation"
+    output_dir: str = "evaluation",
+    rate_delay_sec: Optional[float] = None
 ):
     print("=" * 75)
     print("DOCUMIND-AI: COMPREHENSIVE RAG BENCHMARK & EVALUATION ENGINE")
@@ -170,8 +171,14 @@ def run_evaluation(
 
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Rate limit delay for cloud APIs (Gemini free tier has 15 RPM limit)
+    # Rate limit delay between queries (configurable via --rate-delay or EVAL_RATE_DELAY_SEC)
     is_cloud_api = rag.llm_service.provider_name in ["gemini", "groq"]
+    if rate_delay_sec is None:
+        env_delay = os.environ.get("EVAL_RATE_DELAY_SEC")
+        # Default 4.0s for cloud API (approx 15 RPM unverified default), 0.0s for local/mock
+        delay = float(env_delay) if env_delay else (4.0 if is_cloud_api else 0.0)
+    else:
+        delay = max(0.0, rate_delay_sec)
 
     for idx, item in enumerate(test_questions, 1):
         q_id = item["id"]
@@ -267,9 +274,9 @@ def run_evaluation(
             "Generated Answer": answer
         })
 
-        # Cloud API throttling guard (stay comfortably under 15 RPM for free tiers)
-        if is_cloud_api and idx < len(test_questions):
-            time.sleep(3.5)
+        # Throttling delay between queries to respect provider rate limits
+        if delay > 0 and idx < len(test_questions):
+            time.sleep(delay)
 
     df = pd.DataFrame(records)
 
@@ -373,6 +380,7 @@ if __name__ == "__main__":
     parser.add_argument("--vector-store", type=str, default="chroma", help="Vector store: chroma, qdrant")
     parser.add_argument("--top-k", type=int, default=4, help="Retriever top_k chunks")
     parser.add_argument("--allow-mock", action="store_true", help="Allow running with mock/test embedders for offline verification")
+    parser.add_argument("--rate-delay", type=float, default=None, help="Delay in seconds between LLM queries (default: 4.0s for cloud, 0.0s for mock/local)")
     parser.add_argument("--output-dir", type=str, default="evaluation", help="Directory for evaluation artifacts")
 
     args = parser.parse_args()
@@ -384,5 +392,6 @@ if __name__ == "__main__":
         vector_store_type=args.vector_store,
         top_k=args.top_k,
         allow_mock=args.allow_mock,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        rate_delay_sec=args.rate_delay
     )

@@ -59,6 +59,7 @@ class FastEmbedEmbedder(BaseEmbedder):
         self.cache_dir = cache_dir or os.path.abspath("./fastembed_cache")
         self._model = None
         self._dim = 384
+        self._query_cache: Dict[str, List[float]] = {}
 
     @property
     def dimension(self) -> int:
@@ -80,9 +81,14 @@ class FastEmbedEmbedder(BaseEmbedder):
 
     def get_embedding(self, text: str) -> List[float]:
         cleaned = text.replace("\n", " ").strip() if text else "empty"
+        if cleaned in self._query_cache:
+            return self._query_cache[cleaned]
         model = self._get_model()
         embs = list(model.embed([cleaned]))
-        return [float(x) for x in embs[0]]
+        vec = [float(x) for x in embs[0]]
+        if len(self._query_cache) < 2048:
+            self._query_cache[cleaned] = vec
+        return vec
 
     def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         if not texts:

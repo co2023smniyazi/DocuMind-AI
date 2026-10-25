@@ -1,21 +1,23 @@
 {
   "project_key": "RAG",
-  "project_name": "DocuMind-AI College Document Assistant",
+  "project_name": "College RAG Assistant",
   "methodology": "Scrum",
-  "sprint_length": "1 week",
+  "sprint_length": "2 weeks",
   "total_sprints": 4,
-  "current_sprint": "Sprint 4 - Evaluation & Demo",
-  "total_story_points": 90,
-  "completed_story_points": 70,
-  "in_progress_story_points": 20,
+  "current_sprint": "Sprint 1 - Foundation",
+  "total_story_points": 109,
+  "completed_story_points": 0,
+  "in_progress_story_points": 0,
+  "to_do_story_points": 109,
+  "default_issue_status": "TO DO",
   "workflow": ["TO DO", "IN PROGRESS", "CODE REVIEW", "TESTING", "DONE"],
   "epics": [
-    {"epic_id": "EPIC-1", "name": "Requirements and Dataset", "status": "DONE", "story_points": 11},
-    {"epic_id": "EPIC-2", "name": "LLM & Cloud Setup", "status": "DONE", "story_points": 10},
-    {"epic_id": "EPIC-3", "name": "RAG Pipeline & Claude AI", "status": "DONE", "story_points": 42},
-    {"epic_id": "EPIC-4", "name": "User Interface & Cloud Hosting", "status": "IN PROGRESS", "story_points": 13},
-    {"epic_id": "EPIC-5", "name": "Testing and Evaluation", "status": "IN PROGRESS", "story_points": 15},
-    {"epic_id": "EPIC-6", "name": "Documentation and Demonstration", "status": "IN PROGRESS", "story_points": 5}
+    {"epic_id": "EPIC-1", "name": "Document Ingestion & Extraction", "status": "TO DO", "story_points": 13},
+    {"epic_id": "EPIC-2", "name": "Semantic Chunking & Vector Indexing", "status": "TO DO", "story_points": 18},
+    {"epic_id": "EPIC-3", "name": "Cloud-Native Embedding & Vector Storage", "status": "TO DO", "story_points": 21},
+    {"epic_id": "EPIC-4", "name": "LLM Integration, Fallback & Grounded Generation", "status": "TO DO", "story_points": 21},
+    {"epic_id": "EPIC-5", "name": "Testing, Safe Refusal & Benchmark Evaluation", "status": "TO DO", "story_points": 18},
+    {"epic_id": "EPIC-6", "name": "Cloud Deployment, CI/CD & Security", "status": "TO DO", "story_points": 18}
   ],
-  "last_updated": "2026-10-25T13:45:00Z"
+  "last_updated": "2026-10-25T15:20:00Z"
 }

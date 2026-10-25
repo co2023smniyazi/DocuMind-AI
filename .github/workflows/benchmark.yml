@@ -5,6 +5,19 @@ name: Automated Performance Benchmark
 
 on:
   workflow_dispatch:
+    inputs:
+      vector_store:
+        description: 'Vector store backend (chroma for local runner storage, qdrant for cloud cluster)'
+        required: true
+        default: 'chroma'
+      sizes:
+        description: 'Corpus sizes (chunks)'
+        required: false
+        default: '250 500 1000'
+      queries:
+        description: 'Number of queries per size'
+        required: false
+        default: '30'
 
 jobs:
   benchmark:
@@ -27,8 +40,14 @@ jobs:
           pip install numpy
 
       - name: Run Performance Benchmark
+        env:
+          QDRANT_URL: ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
         run: |
-          python scripts/benchmark.py --sizes 250 500 1000 --queries 30 | tee benchmark_output.log
+          python scripts/benchmark.py \
+            --sizes ${{ github.event.inputs.sizes || '250 500 1000' }} \
+            --queries ${{ github.event.inputs.queries || '30' }} \
+            --vector-store ${{ github.event.inputs.vector_store || 'chroma' }} | tee benchmark_output.log
 
       - name: Upload Benchmark Log
         uses: actions/upload-artifact@v4

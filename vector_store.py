@@ -11,6 +11,7 @@ Guarantees:
 import os
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 import uuid
+import hashlib
 from typing import List, Dict, Any, Optional, Tuple
 from abc import ABC, abstractmethod
 
@@ -106,7 +107,29 @@ class QdrantCloudVectorStore(BaseVectorStore):
                         distance=qmodels.Distance.COSINE
                     )
                 )
+            else:
+                # Validate existing collection dimension against current embedder
+                info = client.get_collection(collection_name=self.collection_name)
+                existing_dim = None
+                if hasattr(info.config.params.vectors, "size"):
+                    existing_dim = info.config.params.vectors.size
+                elif isinstance(info.config.params.vectors, dict) and "" in info.config.params.vectors:
+                    existing_dim = getattr(info.config.params.vectors[""], "size", None)
+                if existing_dim is not None and existing_dim != self.embedding_dimension:
+                    raise ValueError(
+                        f"Qdrant collection '{self.collection_name}' has dimension {existing_dim}, "
+                        f"but current embedder requires dimension {self.embedding_dimension}. Dimension mismatch refused."
+                    )
             self._collection_initialized = True
+            # Create payload index on 'source' for efficient filtered queries
+            try:
+                client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="source",
+                    field_schema=qmodels.PayloadSchemaType.KEYWORD
+                )
+            except Exception:
+                pass
         except Exception as e:
             err = str(e)
             if "suspended" in err.lower() or "connection refused" in err.lower() or "connect" in err.lower():
@@ -126,16 +149,19 @@ class QdrantCloudVectorStore(BaseVectorStore):
 
         points = []
         for chunk, emb in zip(chunks, embeddings):
-            chunk_id = chunk.get("id") or f"{chunk.get('source', 'doc')}_{chunk.get('page', 1)}_{chunk.get('chunk_index', 1)}"
+            text_content = chunk.get("text", "")
+            content_hash = hashlib.sha256(text_content.encode("utf-8")).hexdigest()[:16]
+            chunk_id = chunk.get("id") or f"{chunk.get('source', 'doc')}_p{chunk.get('page', 1)}_{content_hash}"
             point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, chunk_id))
             src = chunk.get("source", "unknown")
             self._known_sources.add(src)
             payload = {
                 "chunk_id": chunk_id,
-                "text": chunk.get("text", ""),
+                "text": text_content,
                 "source": src,
                 "page": int(chunk.get("page", 1)),
-                "chunk_index": int(chunk.get("chunk_index", 1))
+                "chunk_index": int(chunk.get("chunk_index", 1)),
+                "content_hash": content_hash
             }
             points.append(qmodels.PointStruct(id=point_id, vector=[float(x) for x in emb], payload=payload))
 
@@ -406,9 +432,17 @@ def get_vector_store(
     3. If QDRANT_URL is set -> QdrantCloudVectorStore
     4. Otherwise -> ChromaVectorStore (local fallback)
     """
-    selected = (provider or get_secret("VECTOR_STORE_PROVIDER", "")).lower()
+    selected = (provider or get_secret("VECTOR_PROVIDER", get_secret("VECTOR_STORE_PROVIDER", ""))).lower()
 
     if selected == "qdrant":
+        q_url = kwargs.get("url") or get_secret("QDRANT_URL", "")
+        if not q_url or q_url == ":memory:":
+            if kwargs.get("url") == ":memory:":
+                return QdrantCloudVectorStore(url=":memory:", embedding_dimension=embedding_dimension, **kwargs)
+            raise ValueError(
+                "Qdrant Cloud vector store requested, but QDRANT_URL is not set. "
+                "For persistent cloud operation, configure QDRANT_URL and QDRANT_API_KEY."
+            )
         return QdrantCloudVectorStore(embedding_dimension=embedding_dimension, **kwargs)
     elif selected == "memory":
         return QdrantCloudVectorStore(url=":memory:", embedding_dimension=embedding_dimension, **kwargs)

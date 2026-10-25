@@ -97,6 +97,26 @@ def test_qdrant_in_memory_vector_store():
     assert "library.pdf" in stats_after["unique_documents"]
 
 
+def test_qdrant_dimension_mismatch_refused():
+    # First create collection with 384 dimensions
+    store_384 = QdrantCloudVectorStore(url=":memory:", collection_name="col_dim_test", embedding_dimension=384)
+    store_384._ensure_collection()
+
+    # Attempting to re-open the same collection with 768 dimensions must be refused
+    store_768 = QdrantCloudVectorStore(url=":memory:", collection_name="col_dim_test", embedding_dimension=768)
+    store_768._client = store_384._client  # Share in-memory instance
+    with pytest.raises(ValueError) as exc:
+        store_768._ensure_collection()
+    assert "Dimension mismatch refused" in str(exc.value)
+
+
+def test_get_vector_store_qdrant_missing_url_raises():
+    from vector_store import get_vector_store
+    with pytest.raises(ValueError) as exc:
+        get_vector_store(provider="qdrant", url="")
+    assert "QDRANT_URL is not set" in str(exc.value)
+
+
 def test_gemini_llm_service_missing_key():
     service = GeminiLLMService(api_key="")
     assert service.is_available() is False
