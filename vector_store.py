@@ -303,7 +303,7 @@ class ChromaVectorStore(BaseVectorStore):
         if not chunks or not embeddings:
             return 0
 
-        ids = [c["id"] for c in chunks]
+        ids = [str(c.get("id") or c.get("chunk_id") or f"chk_{i}") for i, c in enumerate(chunks)]
         documents = [c["text"] for c in chunks]
         metadatas = [
             {

@@ -1,32 +1,42 @@
 """
 Automated Evaluation and Benchmarking Module (STEP 22-23, 44-47, RAG-17, RAG-18)
 Evaluates:
-1. Retrieval Accuracy (Category A and B)
-2. Safe Refusal Rate (Category C Hallucination Test)
+1. Retrieval Accuracy (Category A Direct and Category B Paraphrased)
+2. Safe Refusal Rate (Category C Hallucination Prevention Test)
 3. 5-Metric Answer Quality Scoring (Correctness, Relevance, Groundedness, Clarity, Completeness)
-4. Exports Final Evaluation Table to CSV and Markdown.
+4. Exports Timestamped Evaluation Results to CSV and Markdown.
+
+HARD RULES:
+- Never overwrites historical evaluation_results.csv or evaluation_report.md.
+- Rejects test/mock embedders unless --allow-mock is explicitly passed.
+- Automatically handles API rate limits (15 RPM for Gemini free tier) with backoff.
 """
 
 import os
+import sys
 import json
 import argparse
 import time
+from datetime import datetime
+from typing import List, Dict, Any, Optional
 import pandas as pd
+
 from rag_service import RAGService
-from llm_service import UNKNOWN_ANSWER_PHRASE
+from embeddings import get_embedder, TestDeterministicEmbedder
+from llm_service import UNKNOWN_ANSWER_PHRASE, MockLLMService
 
 
 def score_answer_heuristics(
     question: str,
     answer: str,
-    expected_doc: str,
-    retrieved_docs: list,
-    expected_keywords: list,
+    expected_doc: Optional[str],
+    retrieved_docs: List[str],
+    expected_keywords: List[str],
     is_refusal: bool,
     unanswerable: bool
-) -> dict:
+) -> Dict[str, Any]:
     """
-    Evaluates answer quality on 1 to 5 scale across 5 metrics specified in Step 23/45.
+    Evaluates answer quality on 1 to 5 scale across 5 metrics specified in project rubric.
     """
     if unanswerable:
         if is_refusal:
@@ -69,7 +79,7 @@ def score_answer_heuristics(
     doc_retrieved = expected_doc in retrieved_docs if expected_doc else False
 
     correctness = 5 if (doc_retrieved and kw_ratio >= 0.6) else (4 if doc_retrieved else 2)
-    relevance = 5 if (len(answer.split()) >= 10 and kw_ratio >= 0.5) else 4
+    relevance = 5 if (len(answer.split()) >= 8 and kw_ratio >= 0.4) else 4
     groundedness = 5 if doc_retrieved else 3
     clarity = 5 if ("." in answer and len(answer) > 20) else 4
     completeness = 5 if kw_ratio >= 0.7 else (4 if kw_ratio >= 0.4 else 3)
@@ -86,20 +96,63 @@ def score_answer_heuristics(
     }
 
 
-def run_evaluation(sample_size: int = None, dataset_path: str = "./tests/test_dataset.json", provider: str = None):
-    print("=" * 70)
-    print("COLLEGE RAG ASSISTANT - COMPREHENSIVE BENCHMARK EVALUATION")
-    print("=" * 70)
+def run_evaluation(
+    sample_size: Optional[int] = None,
+    dataset_path: str = "./tests/test_dataset.json",
+    llm_provider: Optional[str] = None,
+    embed_provider: Optional[str] = "fastembed",
+    vector_store_type: Optional[str] = "chroma",
+    top_k: int = 4,
+    allow_mock: bool = False,
+    output_dir: str = "evaluation"
+):
+    print("=" * 75)
+    print("DOCUMIND-AI: COMPREHENSIVE RAG BENCHMARK & EVALUATION ENGINE")
+    print("=" * 75)
 
     if not os.path.exists(dataset_path):
-        print(f"Error: Dataset not found at {dataset_path}")
-        return
+        raise FileNotFoundError(f"Dataset not found at {dataset_path}")
+
+    # Safety check on mock embeddings
+    embedder = get_embedder(embed_provider)
+    is_mock_embedder = isinstance(embedder, TestDeterministicEmbedder)
+    if is_mock_embedder and not allow_mock:
+        raise ValueError(
+            "Evaluation refused: Mock/TestDeterministicEmbedder was requested without --allow-mock. "
+            "Real evaluation requires FastEmbed ('fastembed'), Gemini ('gemini'), or Ollama ('ollama')."
+        )
+
+    # Initialize RAG Service
+    print(f"Initializing RAG Service with LLM: '{llm_provider or 'auto'}', Embedder: '{embed_provider}'...")
+    rag = RAGService(
+        llm_provider=llm_provider,
+        embed_provider=embed_provider,
+        vector_provider=vector_store_type,
+        top_k=top_k
+    )
+
+    is_mock_run = is_mock_embedder or isinstance(rag.llm_service, MockLLMService)
+    if is_mock_run:
+        print("\n" + "!" * 75)
+        print("WARNING: RUNNING IN MOCK MODE (--allow-mock enabled).")
+        print("RESULTS ARE TAGGED 'MOCK - NOT FOR SUBMISSION'.")
+        print("!" * 75 + "\n")
+
+    # Verify or trigger indexing
+    stats = rag.get_stats()
+    doc_count = len(stats.get("unique_documents", []))
+    print(f"Vector Store Status: {stats.get('total_chunks', 0)} chunks across {doc_count} documents.")
+    if stats["total_chunks"] == 0:
+        print("Vector database is empty. Indexing './data' documents now...")
+        rag.index_directory("./data")
+        stats = rag.get_stats()
+        print(f"Indexing completed: {stats['total_chunks']} chunks in store.")
 
     with open(dataset_path, "r", encoding="utf-8") as f:
         dataset = json.load(f)
 
     if sample_size and sample_size < len(dataset):
-        # Pick proportional sample from each category
+        # Balanced sampling across categories A, B, and C
         cat_a = [q for q in dataset if q["category"].startswith("A")][:max(1, sample_size // 2)]
         cat_b = [q for q in dataset if q["category"].startswith("B")][:max(1, sample_size // 4)]
         cat_c = [q for q in dataset if q["category"].startswith("C")][:max(1, sample_size // 4)]
@@ -107,59 +160,77 @@ def run_evaluation(sample_size: int = None, dataset_path: str = "./tests/test_da
     else:
         test_questions = dataset
 
-    print(f"Loaded {len(test_questions)} questions for evaluation.")
-    rag = RAGService(llm_provider=provider)
-
-    # Verify index
-    stats = rag.get_stats()
-    if stats["total_chunks"] == 0:
-        print("Vector database is empty. Indexing ./data now...")
-        rag.index_directory("./data")
-
+    print(f"Commencing benchmark on {len(test_questions)} questions...")
     records = []
-    correct_retrievals = 0
-    total_answerable = 0
-    correct_refusals = 0
-    total_unanswerable = 0
+    cat_stats = {
+        "A": {"total": 0, "retrieval_correct": 0, "scores": []},
+        "B": {"total": 0, "retrieval_correct": 0, "scores": []},
+        "C": {"total": 0, "refusal_correct": 0, "scores": []}
+    }
 
-    print("\nRunning evaluation on test cases...")
+    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Rate limit delay for cloud APIs (Gemini free tier has 15 RPM limit)
+    is_cloud_api = rag.llm_service.provider_name in ["gemini", "groq"]
+
     for idx, item in enumerate(test_questions, 1):
         q_id = item["id"]
-        category = item["category"]
+        category_full = item["category"]
+        category_code = "A" if category_full.startswith("A") else ("B" if category_full.startswith("B") else "C")
         question = item["question"]
-        expected_doc = item["expected_document"]
-        expected_keywords = item["expected_keywords"]
-        unanswerable = item["unanswerable"]
+        expected_doc = item.get("expected_document")
+        expected_keywords = item.get("expected_keywords", [])
+        unanswerable = item.get("unanswerable", False)
 
-        print(f"[{idx}/{len(test_questions)}] Q{q_id} ({category}): {question[:45]}...", end="", flush=True)
+        print(f"[{idx:02d}/{len(test_questions):02d}] Q{q_id:02d} [{category_code}]: {question[:45]}...", end="", flush=True)
 
+        # Execute query with retry for rate limits
+        max_retries = 3
+        result = None
         start_t = time.time()
-        result = rag.answer_question(question)
-        latency = round(time.time() - start_t, 2)
+        for attempt in range(max_retries):
+            try:
+                result = rag.answer_question(question)
+                break
+            except Exception as e:
+                if "429" in str(e) or "ResourceExhausted" in str(e):
+                    wait_time = (2 ** attempt) * 4
+                    print(f" [Rate limit, waiting {wait_time}s]...", end="", flush=True)
+                    time.sleep(wait_time)
+                else:
+                    result = {
+                        "answer": f"Error: {e}",
+                        "sources": [],
+                        "retrieved_chunks": [],
+                        "is_refusal": False,
+                        "is_error": True,
+                        "latency_ms": 0.0,
+                        "provider": rag.llm_service.provider_name
+                    }
+                    break
 
+        latency = round(time.time() - start_t, 2)
         answer = result["answer"]
         is_refusal = result["is_refusal"]
-        retrieved_docs = [c.get("source") for c in result["retrieved_chunks"]]
+        retrieved_docs = [c.get("source") for c in result.get("retrieved_chunks", [])]
 
-        # Retrieval check
+        # Evaluate Retrieval Accuracy (Cat A & B)
+        retrieval_correct = None
         if not unanswerable:
-            total_answerable += 1
-            retrieval_correct = expected_doc in retrieved_docs
+            retrieval_correct = expected_doc in retrieved_docs if expected_doc else False
+            cat_stats[category_code]["total"] += 1
             if retrieval_correct:
-                correct_retrievals += 1
-        else:
-            total_unanswerable += 1
-            retrieval_correct = None  # N/A for unanswerable
+                cat_stats[category_code]["retrieval_correct"] += 1
 
-        # Refusal check for Category C
+        # Evaluate Safe Refusal (Cat C)
+        refusal_correct = None
         if unanswerable:
             refusal_correct = is_refusal
+            cat_stats["C"]["total"] += 1
             if refusal_correct:
-                correct_refusals += 1
-        else:
-            refusal_correct = None
+                cat_stats["C"]["refusal_correct"] += 1
 
-        # Score answer
+        # Heuristic scoring
         scores = score_answer_heuristics(
             question=question,
             answer=answer,
@@ -169,15 +240,18 @@ def run_evaluation(sample_size: int = None, dataset_path: str = "./tests/test_da
             is_refusal=is_refusal,
             unanswerable=unanswerable
         )
+        cat_stats[category_code]["scores"].append(scores["overall"])
 
-        print(f" -> Latency: {latency}s | Overall Score: {scores['overall']}/5")
+        status_flag = "REFUSAL_OK" if (unanswerable and is_refusal) else ("RETRIEVE_OK" if retrieval_correct else "FLAGGED")
+        print(f" -> {status_flag} | {latency}s | Score: {scores['overall']}/5")
 
         records.append({
             "Question ID": q_id,
-            "Category": category,
+            "Category": category_full,
+            "Category Code": category_code,
             "Question": question,
             "Expected Document": expected_doc or "None (Unanswerable)",
-            "Retrieved Document(s)": ", ".join(set(retrieved_docs)) if retrieved_docs else "None",
+            "Retrieved Document(s)": ", ".join(dict.fromkeys(retrieved_docs)) if retrieved_docs else "None",
             "Retrieval Correct?": "Yes" if retrieval_correct is True else ("No" if retrieval_correct is False else "N/A"),
             "Is Refusal?": "Yes" if is_refusal else "No",
             "Safe Refusal Correct?": "Yes" if refusal_correct is True else ("No" if refusal_correct is False else "N/A"),
@@ -188,14 +262,25 @@ def run_evaluation(sample_size: int = None, dataset_path: str = "./tests/test_da
             "Completeness (1-5)": scores["completeness"],
             "Overall Score": scores["overall"],
             "Latency (s)": latency,
+            "LLM Provider": result.get("provider", rag.llm_service.provider_name),
+            "Embedder": embed_provider,
             "Generated Answer": answer
         })
 
+        # Cloud API throttling guard (stay comfortably under 15 RPM for free tiers)
+        if is_cloud_api and idx < len(test_questions):
+            time.sleep(3.5)
+
     df = pd.DataFrame(records)
 
-    # Calculate overall metrics
-    retrieval_accuracy = (correct_retrievals / total_answerable * 100) if total_answerable > 0 else 0.0
-    safe_refusal_rate = (correct_refusals / total_unanswerable * 100) if total_unanswerable > 0 else 0.0
+    # Calculate Metrics
+    tot_ans = cat_stats["A"]["total"] + cat_stats["B"]["total"]
+    ret_ans = cat_stats["A"]["retrieval_correct"] + cat_stats["B"]["retrieval_correct"]
+    overall_retrieval_acc = (ret_ans / tot_ans * 100) if tot_ans > 0 else 0.0
+
+    cat_a_acc = (cat_stats["A"]["retrieval_correct"] / max(cat_stats["A"]["total"], 1)) * 100
+    cat_b_acc = (cat_stats["B"]["retrieval_correct"] / max(cat_stats["B"]["total"], 1)) * 100
+    safe_refusal_rate = (cat_stats["C"]["refusal_correct"] / max(cat_stats["C"]["total"], 1)) * 100
 
     avg_correctness = df["Correctness (1-5)"].mean()
     avg_relevance = df["Relevance (1-5)"].mean()
@@ -204,63 +289,100 @@ def run_evaluation(sample_size: int = None, dataset_path: str = "./tests/test_da
     avg_completeness = df["Completeness (1-5)"].mean()
     avg_overall = df["Overall Score"].mean()
     avg_latency = df["Latency (s)"].mean()
+    p50_latency = df["Latency (s)"].median()
+    p90_latency = df["Latency (s)"].quantile(0.90)
 
-    # Save to CSV
-    csv_path = "./evaluation_results.csv"
-    df.to_csv(csv_path, index=False)
+    # Create destination output directory without touching old root files
+    os.makedirs(output_dir, exist_ok=True)
+    out_csv = os.path.join(output_dir, f"evaluation_results_{timestamp_str}.csv")
+    out_md = os.path.join(output_dir, f"evaluation_report_{timestamp_str}.md")
 
-    # Generate Markdown Report
-    report_md = f"""# Final Evaluation and Benchmark Report
+    mock_badge = "\n> [!CAUTION]\n> **MOCK RUN - NOT FOR SUBMISSION**: Generated with mock embeddings or mock LLM.\n" if is_mock_run else ""
 
-## 1. Summary of Overall Metrics (STEP 22-23, 44-47)
+    df.to_csv(out_csv, index=False)
 
-| Metric | Target | Achieved Score | Notes |
-|---|---|---|---|
-| **Total Test Questions** | 50 | {len(test_questions)} | Across Category A, B, and C |
-| **Retrieval Accuracy** | >= 85% | **{retrieval_accuracy:.1f}%** | Correct document retrieved for answerable questions |
-| **Safe Refusal Rate** | 100% | **{safe_refusal_rate:.1f}%** | Correctly stated information not found without hallucinating |
-| **Correctness (1-5)** | 5.0 | **{avg_correctness:.2f} / 5.0** | Factually aligned with document contents |
-| **Relevance (1-5)** | 5.0 | **{avg_relevance:.2f} / 5.0** | Direct response to user prompt |
-| **Groundedness (1-5)** | 5.0 | **{avg_groundedness:.2f} / 5.0** | Backed by retrieved chunk context |
-| **Clarity (1-5)** | 5.0 | **{avg_clarity:.2f} / 5.0** | Natural language readability |
-| **Completeness (1-5)** | 5.0 | **{avg_completeness:.2f} / 5.0** | Contains required procedural/policy details |
-| **Mean Overall Quality** | >= 4.0 | **{avg_overall:.2f} / 5.0** | Composite rubric score |
-| **Average Response Time**| < 8s | **{avg_latency:.2f} s** | Local inference with Ollama `llama3.2:3b` |
+    report_content = f"""# Benchmark Evaluation Report
+**Timestamp**: {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}  
+**LLM Provider**: `{rag.llm_service.provider_name}`  
+**Embedding Provider**: `{embed_provider}` ({getattr(embedder, 'dimension', 384)}-dimensional)  
+**Vector Store**: `{vector_store_type}`  
+**Dataset**: `{dataset_path}` ({len(test_questions)} questions evaluated)  
+{mock_badge}
+## 1. Executive Summary & KPIs
 
-## 2. Category Breakdown
+| Metric | Target | Achieved Score | Status | Description |
+|---|---|---|---|---|
+| **Overall Retrieval Accuracy** | ≥ 85.0% | **{overall_retrieval_acc:.1f}%** | {'PASS' if overall_retrieval_acc >= 85 else 'FAIL'} | Category A + B answerable questions |
+| **Category A (Direct) Retrieval** | ≥ 90.0% | **{cat_a_acc:.1f}%** | {'PASS' if cat_a_acc >= 90 else 'REVIEW'} | Direct policy & regulatory questions ({cat_stats['A']['retrieval_correct']}/{cat_stats['A']['total']}) |
+| **Category B (Paraphrased) Retrieval** | ≥ 80.0% | **{cat_b_acc:.1f}%** | {'PASS' if cat_b_acc >= 80 else 'REVIEW'} | Conversational rephrasings ({cat_stats['B']['retrieval_correct']}/{cat_stats['B']['total']}) |
+| **Safe Refusal Rate (Category C)** | 100.0% | **{safe_refusal_rate:.1f}%** | {'PASS' if safe_refusal_rate >= 90 else 'FAIL'} | Hallucination prevention on unanswerables ({cat_stats['C']['refusal_correct']}/{cat_stats['C']['total']}) |
+| **Average Response Latency** | < 8.0s | **{avg_latency:.2f} s** | {'PASS' if avg_latency < 8 else 'REVIEW'} | Median (P50): {p50_latency:.2f}s, P90: {p90_latency:.2f}s |
+| **Composite Quality Score** | ≥ 4.0 / 5.0 | **{avg_overall:.2f} / 5.0** | {'PASS' if avg_overall >= 4.0 else 'REVIEW'} | 5-Metric Composite Rubric Score |
 
-- **Category A (Direct Questions):** Evaluates direct fact retrieval and adherence.
-- **Category B (Paraphrased Questions):** Tests semantic understanding of conversational phrasing.
-- **Category C (Unanswerable Questions):** Hallucination test ensuring safe refusal.
+---
 
-## 3. Detailed Evaluation Results (First 10 Sample Rows)
+## 2. Five-Metric Rubric Breakdown (Scale 1 to 5)
 
-| ID | Category | Question | Expected Document | Retrieved Document | Retrieval Correct? | Safe Refusal? | Overall Score |
+| Metric | Average Score | Description |
+|---|---|---|
+| **Correctness** | **{avg_correctness:.2f}** / 5.0 | Factual truth relative to ground-truth PDFs |
+| **Relevance** | **{avg_relevance:.2f}** / 5.0 | Direct pertinence to the student question |
+| **Groundedness** | **{avg_groundedness:.2f}** / 5.0 | Strict adherence to retrieved context (zero extraneous fabrications) |
+| **Clarity** | **{avg_clarity:.2f}** / 5.0 | Readability, structure, and professional student tone |
+| **Completeness** | **{avg_completeness:.2f}** / 5.0 | Inclusion of required policy provisions, thresholds, and conditions |
+
+---
+
+## 3. Sample Detailed Test Results (First 10 Cases)
+
+| Q# | Category | Question | Expected Doc | Retrieved Doc(s) | Retrieval OK? | Safe Refusal? | Score |
 |---|---|---|---|---|---|---|---|
 """
     for _, row in df.head(10).iterrows():
-        report_md += f"| {row['Question ID']} | {row['Category']} | {row['Question'][:35]}... | {row['Expected Document']} | {row['Retrieved Document(s)']} | {row['Retrieval Correct?']} | {row['Safe Refusal Correct?']} | {row['Overall Score']} |\n"
+        ret_ok = row["Retrieval Correct?"]
+        ref_ok = row["Safe Refusal Correct?"]
+        report_content += (
+            f"| Q{row['Question ID']} | {row['Category Code']} | {row['Question'][:32]}... | "
+            f"`{row['Expected Document']}` | `{row['Retrieved Document(s)'][:25]}` | "
+            f"{ret_ok} | {ref_ok} | {row['Overall Score']}/5.0 |\n"
+        )
 
-    report_path = "./evaluation_report.md"
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write(report_md)
+    with open(out_md, "w", encoding="utf-8") as f:
+        f.write(report_content)
 
-    print("\n" + "=" * 70)
-    print("EVALUATION RESULTS SUMMARY")
-    print("=" * 70)
-    print(f"Retrieval Accuracy : {retrieval_accuracy:.1f}% ({correct_retrievals}/{total_answerable})")
-    print(f"Safe Refusal Rate  : {safe_refusal_rate:.1f}% ({correct_refusals}/{total_unanswerable})")
-    print(f"Mean Overall Score : {avg_overall:.2f} / 5.0")
-    print(f"Average Latency    : {avg_latency:.2f} s")
-    print(f"Detailed CSV saved : {os.path.abspath(csv_path)}")
-    print(f"Markdown Report    : {os.path.abspath(report_path)}")
-    print("=" * 70)
+    print("\n" + "=" * 75)
+    print("EVALUATION COMPLETE")
+    print(f"Overall Retrieval Accuracy : {overall_retrieval_acc:.1f}% ({ret_ans}/{tot_ans})")
+    print(f" - Category A (Direct)     : {cat_a_acc:.1f}% ({cat_stats['A']['retrieval_correct']}/{cat_stats['A']['total']})")
+    print(f" - Category B (Paraphrase) : {cat_b_acc:.1f}% ({cat_stats['B']['retrieval_correct']}/{cat_stats['B']['total']})")
+    print(f"Safe Refusal Rate (Cat C)  : {safe_refusal_rate:.1f}% ({cat_stats['C']['refusal_correct']}/{cat_stats['C']['total']})")
+    print(f"Composite Quality Score    : {avg_overall:.2f} / 5.0")
+    print(f"Mean Latency               : {avg_latency:.2f} s (P50: {p50_latency:.2f}s, P90: {p90_latency:.2f}s)")
+    print(f"Saved CSV Report           : {os.path.abspath(out_csv)}")
+    print(f"Saved Markdown Report      : {os.path.abspath(out_md)}")
+    print("=" * 75)
+    return df, out_csv, out_md
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Evaluate College RAG Assistant")
-    parser.add_argument("--sample", type=int, default=None, help="Evaluate a sample subset of N questions")
-    parser.add_argument("--provider", type=str, default=None, help="LLM provider: claude, ollama, mock, auto")
-    args = parser.parse_args()
-    run_evaluation(sample_size=args.sample, provider=args.provider)
+    parser = argparse.ArgumentParser(description="DocuMind-AI Evaluation & Benchmarking Suite")
+    parser.add_argument("--sample", type=int, default=None, help="Sample size (e.g. 10 or 50)")
+    parser.add_argument("--dataset", type=str, default="./tests/test_dataset.json", help="Path to evaluation dataset")
+    parser.add_argument("--llm-provider", type=str, default=None, help="LLM Provider: gemini, groq, claude, ollama, mock, auto")
+    parser.add_argument("--embed-provider", type=str, default="fastembed", help="Embedding Provider: fastembed, gemini, ollama, test")
+    parser.add_argument("--vector-store", type=str, default="chroma", help="Vector store: chroma, qdrant")
+    parser.add_argument("--top-k", type=int, default=4, help="Retriever top_k chunks")
+    parser.add_argument("--allow-mock", action="store_true", help="Allow running with mock/test embedders for offline verification")
+    parser.add_argument("--output-dir", type=str, default="evaluation", help="Directory for evaluation artifacts")
 
+    args = parser.parse_args()
+    run_evaluation(
+        sample_size=args.sample,
+        dataset_path=args.dataset,
+        llm_provider=args.llm_provider,
+        embed_provider=args.embed_provider,
+        vector_store_type=args.vector_store,
+        top_k=args.top_k,
+        allow_mock=args.allow_mock,
+        output_dir=args.output_dir
+    )

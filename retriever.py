@@ -81,3 +81,8 @@ class SemanticRetriever:
         # 5. Deduplicate and trim to requested top_k
         deduped = self._deduplicate_chunks(results)
         return deduped[:top_k]
+
+
+# Alias for backwards compatibility
+DocumentRetriever = SemanticRetriever
+

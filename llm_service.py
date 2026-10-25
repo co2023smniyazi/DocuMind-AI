@@ -42,6 +42,8 @@ Always cite the source document name and page number if available."""
 class BaseLLMService(ABC):
     """Abstract base class for LLM providers."""
 
+    provider_name: str = "base"
+
     @abstractmethod
     def is_available(self) -> bool:
         pass
@@ -64,6 +66,8 @@ class GeminiLLMService(BaseLLMService):
     Default Model: gemini-2.0-flash (Verified Free Tier: 15 RPM, 1,000,000 TPM, 1,500 RPD).
     Official limits: https://ai.google.dev/pricing
     """
+
+    provider_name: str = "gemini"
 
     def __init__(
         self,
@@ -143,6 +147,8 @@ class GroqLLMService(BaseLLMService):
     Default Model: llama-3.3-70b-versatile or llama-3.1-8b-instant.
     Official limits: https://console.groq.com/docs/rate-limits (30 RPM, free of charge).
     """
+
+    provider_name: str = "groq"
 
     def __init__(
         self,
@@ -527,6 +533,8 @@ class MockLLMService(BaseLLMService):
     """
     Deterministic mock service for unit testing and offline CI verification.
     """
+
+    provider_name: str = "mock"
 
     def __init__(self, canned_response: Optional[str] = None):
         self.canned_response = canned_response
