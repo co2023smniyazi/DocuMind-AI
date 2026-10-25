@@ -1,0 +1,403 @@
+[
+  {
+    "id": 1,
+    "category": "A - Direct",
+    "question": "What is the minimum attendance required to appear for the semester examination?",
+    "expected_document": "academic_regulations.pdf",
+    "expected_keywords": ["75%", "attendance", "semester"],
+    "unanswerable": false
+  },
+  {
+    "id": 2,
+    "category": "A - Direct",
+    "question": "What is the condonation fee for attendance shortage?",
+    "expected_document": "academic_regulations.pdf",
+    "expected_keywords": ["500", "condonation", "65%"],
+    "unanswerable": false
+  },
+  {
+    "id": 3,
+    "category": "A - Direct",
+    "question": "How many credits are required for graduation in the 4-year B.Tech program?",
+    "expected_document": "academic_regulations.pdf",
+    "expected_keywords": ["160", "credits", "B.Tech"],
+    "unanswerable": false
+  },
+  {
+    "id": 4,
+    "category": "A - Direct",
+    "question": "How many credits are required for graduation for Lateral Entry students?",
+    "expected_document": "academic_regulations.pdf",
+    "expected_keywords": ["120", "lateral entry"],
+    "unanswerable": false
+  },
+  {
+    "id": 5,
+    "category": "A - Direct",
+    "question": "What is the minimum CGPA required for First Class with Distinction?",
+    "expected_document": "academic_regulations.pdf",
+    "expected_keywords": ["7.5", "distinction"],
+    "unanswerable": false
+  },
+  {
+    "id": 6,
+    "category": "A - Direct",
+    "question": "What percentage of credits is required for promotion from 1st to 2nd year?",
+    "expected_document": "academic_regulations.pdf",
+    "expected_keywords": ["50%", "promotion"],
+    "unanswerable": false
+  },
+  {
+    "id": 7,
+    "category": "A - Direct",
+    "question": "What documents are required for semester registration?",
+    "expected_document": "academic_regulations.pdf",
+    "expected_keywords": ["fee payment receipt", "grade sheet", "anti-ragging"],
+    "unanswerable": false
+  },
+  {
+    "id": 8,
+    "category": "A - Direct",
+    "question": "What is the fee for examination revaluation per subject?",
+    "expected_document": "examination_guidelines.pdf",
+    "expected_keywords": ["750", "revaluation"],
+    "unanswerable": false
+  },
+  {
+    "id": 9,
+    "category": "A - Direct",
+    "question": "Within how many days must a student apply for examination revaluation?",
+    "expected_document": "examination_guidelines.pdf",
+    "expected_keywords": ["10 days", "results"],
+    "unanswerable": false
+  },
+  {
+    "id": 10,
+    "category": "A - Direct",
+    "question": "What is the maximum number of attempts allowed to clear a backlog subject?",
+    "expected_document": "examination_guidelines.pdf",
+    "expected_keywords": ["3", "attempts", "backlog"],
+    "unanswerable": false
+  },
+  {
+    "id": 11,
+    "category": "A - Direct",
+    "question": "What is the fee for Challenge Valuation?",
+    "expected_document": "examination_guidelines.pdf",
+    "expected_keywords": ["3,000", "challenge valuation"],
+    "unanswerable": false
+  },
+  {
+    "id": 12,
+    "category": "A - Direct",
+    "question": "What is the penalty for possessing a mobile phone in the examination hall?",
+    "expected_document": "examination_guidelines.pdf",
+    "expected_keywords": ["malpractice", "Grade F", "cancellation"],
+    "unanswerable": false
+  },
+  {
+    "id": 13,
+    "category": "A - Direct",
+    "question": "What are the official campus working hours?",
+    "expected_document": "student_handbook.pdf",
+    "expected_keywords": ["9:00 AM", "4:30 PM"],
+    "unanswerable": false
+  },
+  {
+    "id": 14,
+    "category": "A - Direct",
+    "question": "What is the National Anti-Ragging Toll-Free Helpline number?",
+    "expected_document": "student_handbook.pdf",
+    "expected_keywords": ["1800-180-5522"],
+    "unanswerable": false
+  },
+  {
+    "id": 15,
+    "category": "A - Direct",
+    "question": "How many books can an undergraduate student borrow from the library?",
+    "expected_document": "student_handbook.pdf",
+    "expected_keywords": ["4 books", "14 days"],
+    "unanswerable": false
+  },
+  {
+    "id": 16,
+    "category": "A - Direct",
+    "question": "What is the late return fine per book per day in the library?",
+    "expected_document": "student_handbook.pdf",
+    "expected_keywords": ["2", "fine"],
+    "unanswerable": false
+  },
+  {
+    "id": 17,
+    "category": "A - Direct",
+    "question": "What is the minimum CGPA required to be eligible for campus placements?",
+    "expected_document": "placement_guidelines.pdf",
+    "expected_keywords": ["6.5", "60%"],
+    "unanswerable": false
+  },
+  {
+    "id": 18,
+    "category": "A - Direct",
+    "question": "What attendance percentage is mandatory for placement training sessions?",
+    "expected_document": "placement_guidelines.pdf",
+    "expected_keywords": ["85%", "training"],
+    "unanswerable": false
+  },
+  {
+    "id": 19,
+    "category": "A - Direct",
+    "question": "What is the required laboratory attendance percentage?",
+    "expected_document": "department_rules.pdf",
+    "expected_keywords": ["100%", "laboratory"],
+    "unanswerable": false
+  },
+  {
+    "id": 20,
+    "category": "A - Direct",
+    "question": "What is the maximum allowed plagiarism similarity index for the mini-project report?",
+    "expected_document": "department_rules.pdf",
+    "expected_keywords": ["15%", "plagiarism"],
+    "unanswerable": false
+  },
+  {
+    "id": 21,
+    "category": "B - Paraphrased",
+    "question": "How many classes can I miss before getting detained?",
+    "expected_document": "academic_regulations.pdf",
+    "expected_keywords": ["75%", "attendance", "detained"],
+    "unanswerable": false
+  },
+  {
+    "id": 22,
+    "category": "B - Paraphrased",
+    "question": "Can I appear for exams if I have 68% attendance due to illness?",
+    "expected_document": "academic_regulations.pdf",
+    "expected_keywords": ["condonation", "medical", "65%"],
+    "unanswerable": false
+  },
+  {
+    "id": 23,
+    "category": "B - Paraphrased",
+    "question": "What happens if my overall attendance drops below 65%?",
+    "expected_document": "academic_regulations.pdf",
+    "expected_keywords": ["detained", "repeat"],
+    "unanswerable": false
+  },
+  {
+    "id": 24,
+    "category": "B - Paraphrased",
+    "question": "How many total credit points do regular 4-year degree students need to pass?",
+    "expected_document": "academic_regulations.pdf",
+    "expected_keywords": ["160", "credits"],
+    "unanswerable": false
+  },
+  {
+    "id": 25,
+    "category": "B - Paraphrased",
+    "question": "What grade point average awards distinction honours?",
+    "expected_document": "academic_regulations.pdf",
+    "expected_keywords": ["7.5", "distinction"],
+    "unanswerable": false
+  },
+  {
+    "id": 26,
+    "category": "B - Paraphrased",
+    "question": "If I am unhappy with my semester marks, how do I request a paper recheck?",
+    "expected_document": "examination_guidelines.pdf",
+    "expected_keywords": ["revaluation", "750", "10 days"],
+    "unanswerable": false
+  },
+  {
+    "id": 27,
+    "category": "B - Paraphrased",
+    "question": "Under what condition will my revaluation marks replace my original score?",
+    "expected_document": "examination_guidelines.pdf",
+    "expected_keywords": ["15%", "difference"],
+    "unanswerable": false
+  },
+  {
+    "id": 28,
+    "category": "B - Paraphrased",
+    "question": "When can I get back my 3000 rupee challenge evaluation deposit?",
+    "expected_document": "examination_guidelines.pdf",
+    "expected_keywords": ["refunded", "20%"],
+    "unanswerable": false
+  },
+  {
+    "id": 29,
+    "category": "B - Paraphrased",
+    "question": "How many chances do I have to clear failed subjects?",
+    "expected_document": "examination_guidelines.pdf",
+    "expected_keywords": ["3", "attempts", "backlog"],
+    "unanswerable": false
+  },
+  {
+    "id": 30,
+    "category": "B - Paraphrased",
+    "question": "What are the rules regarding dress code on casual days?",
+    "expected_document": "student_handbook.pdf",
+    "expected_keywords": ["Wednesdays", "Fridays", "casual"],
+    "unanswerable": false
+  },
+  {
+    "id": 31,
+    "category": "B - Paraphrased",
+    "question": "Where should I report seniors teasing or harassing junior students?",
+    "expected_document": "student_handbook.pdf",
+    "expected_keywords": ["Anti-Ragging", "1800-180-5522"],
+    "unanswerable": false
+  },
+  {
+    "id": 32,
+    "category": "B - Paraphrased",
+    "question": "What time must hostel residents return to the dormitory in the evening?",
+    "expected_document": "student_handbook.pdf",
+    "expected_keywords": ["8:00 PM", "9:00 PM"],
+    "unanswerable": false
+  },
+  {
+    "id": 33,
+    "category": "B - Paraphrased",
+    "question": "For how many weeks can a student keep borrowed library materials?",
+    "expected_document": "student_handbook.pdf",
+    "expected_keywords": ["14 days", "4 books"],
+    "unanswerable": false
+  },
+  {
+    "id": 34,
+    "category": "B - Paraphrased",
+    "question": "Can I sit for another company if I already got an offer through college placement?",
+    "expected_document": "placement_guidelines.pdf",
+    "expected_keywords": ["One-Student-One-Job", "Dream", "2x"],
+    "unanswerable": false
+  },
+  {
+    "id": 35,
+    "category": "B - Paraphrased",
+    "question": "What is the cutoff score to be allowed to register for campus recruitment?",
+    "expected_document": "placement_guidelines.pdf",
+    "expected_keywords": ["6.5", "60%"],
+    "unanswerable": false
+  },
+  {
+    "id": 36,
+    "category": "B - Paraphrased",
+    "question": "Within what timeframe must an employment offer letter be accepted?",
+    "expected_document": "placement_guidelines.pdf",
+    "expected_keywords": ["48 hours", "accept"],
+    "unanswerable": false
+  },
+  {
+    "id": 37,
+    "category": "B - Paraphrased",
+    "question": "What happens if a student misses a practical laboratory experiment due to fever?",
+    "expected_document": "department_rules.pdf",
+    "expected_keywords": ["makeup", "10 days", "Saturday"],
+    "unanswerable": false
+  },
+  {
+    "id": 38,
+    "category": "B - Paraphrased",
+    "question": "How many members are allowed in a mini-project group?",
+    "expected_document": "department_rules.pdf",
+    "expected_keywords": ["3 to 4", "teams"],
+    "unanswerable": false
+  },
+  {
+    "id": 39,
+    "category": "B - Paraphrased",
+    "question": "When is the midterm demonstration deadline for the final-year mini project?",
+    "expected_document": "department_rules.pdf",
+    "expected_keywords": ["Week 8", "Milestone 2"],
+    "unanswerable": false
+  },
+  {
+    "id": 40,
+    "category": "B - Paraphrased",
+    "question": "What attire is strictly required when working in electrical and mechanical labs?",
+    "expected_document": "department_rules.pdf",
+    "expected_keywords": ["closed-toe shoes", "lab coats"],
+    "unanswerable": false
+  },
+  {
+    "id": 41,
+    "category": "C - Unanswerable",
+    "question": "What is the hostel accommodation and room fee per semester?",
+    "expected_document": null,
+    "expected_keywords": [],
+    "unanswerable": true
+  },
+  {
+    "id": 42,
+    "category": "C - Unanswerable",
+    "question": "Who will be the chief guest for next year's annual day?",
+    "expected_document": null,
+    "expected_keywords": [],
+    "unanswerable": true
+  },
+  {
+    "id": 43,
+    "category": "C - Unanswerable",
+    "question": "What is the cafeteria lunch menu on Sundays?",
+    "expected_document": null,
+    "expected_keywords": [],
+    "unanswerable": true
+  },
+  {
+    "id": 44,
+    "category": "C - Unanswerable",
+    "question": "What are the bus routes and bus pass charges for Route 14?",
+    "expected_document": null,
+    "expected_keywords": [],
+    "unanswerable": true
+  },
+  {
+    "id": 45,
+    "category": "C - Unanswerable",
+    "question": "What is the fee for the gym and swimming pool membership?",
+    "expected_document": null,
+    "expected_keywords": [],
+    "unanswerable": true
+  },
+  {
+    "id": 46,
+    "category": "C - Unanswerable",
+    "question": "Does the college offer scholarships for classical dance and musical instruments?",
+    "expected_document": null,
+    "expected_keywords": [],
+    "unanswerable": true
+  },
+  {
+    "id": 47,
+    "category": "C - Unanswerable",
+    "question": "What are the timings for the campus laundry service?",
+    "expected_document": null,
+    "expected_keywords": [],
+    "unanswerable": true
+  },
+  {
+    "id": 48,
+    "category": "C - Unanswerable",
+    "question": "How do I apply for the alumni association lifetime membership card?",
+    "expected_document": null,
+    "expected_keywords": [],
+    "unanswerable": true
+  },
+  {
+    "id": 49,
+    "category": "C - Unanswerable",
+    "question": "What is the flight ticket reimbursement policy for summer internships?",
+    "expected_document": null,
+    "expected_keywords": [],
+    "unanswerable": true
+  },
+  {
+    "id": 50,
+    "category": "C - Unanswerable",
+    "question": "What is the parking fee for two-wheelers inside the campus?",
+    "expected_document": null,
+    "expected_keywords": [],
+    "unanswerable": true
+  }
+]
+

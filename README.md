@@ -1,227 +1,185 @@
-# Design and Development of a Local LLM-Based College Document Question Answering Assistant Using Retrieval-Augmented Generation (RAG)
-### Project Management and Tracking Using Jira
+# DocuMind AI: Cloud-Native College Document Q&A Assistant Using RAG & Claude AI
+### Project Management and Tracking Using Jira Scrum Framework
+
+[![DocuMind AI CI Test Suite](https://github.com/co2023smniyazi/DocuMind-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/co2023smniyazi/DocuMind-AI/actions/workflows/ci.yml)
+[![Streamlit Community Cloud](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io)
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
+[![Anthropic Claude](https://img.shields.io/badge/LLM-Anthropic%20Claude-8A2BE2.svg)](https://www.anthropic.com/)
+[![Jira Scrum](https://img.shields.io/badge/Jira-Scrum%20RAG-0052CC.svg)](https://www.atlassian.com/software/jira)
 
 ---
 
-## 1. Project Overview & Main Idea
-Colleges maintain large amounts of critical information in disparate PDF documents:
-- Academic Regulations
-- Examination Guidelines
-- Student Handbooks & Code of Conduct
-- Training and Placement Guidelines
-- Department & Laboratory Rules
+## 1. Project Overview & Cloud Architecture
 
-Students frequently ask questions such as:
-- *What is the minimum attendance required to appear for semester exams?*
-- *How many classes can I miss?*
-- *What is the procedure for examination revaluation?*
-- *What are the eligibility criteria for campus placements?*
+**DocuMind AI** is a cloud-native Retrieval-Augmented Generation (RAG) assistant designed to allow college students and faculty to query official academic policies, regulations, examination guidelines, student handbooks, and placement rules using natural language.
 
-Instead of manually searching through dozens of PDF pages or guessing, this application implements a **local, 100% zero-cost Retrieval-Augmented Generation (RAG) Question Answering Assistant**.
-
-### Key System Characteristics:
-1. **Local LLM Inference:** Powered locally by **Ollama (`llama3.2:3b`)**. No paid APIs (OpenAI, Gemini, Claude) required.
-2. **Local Vector Embeddings:** Powered by **`nomic-embed-text`** (768-dimensional semantic embeddings).
-3. **Local Vector Database:** Stored persistently using **ChromaDB**.
-4. **Source Attribution & Citations:** Every answer cites the exact source PDF document and page number.
-5. **Hallucination Prevention & Safe Refusal:** When information is absent from the documents, the system strictly outputs:
-   > *"Information not found in the available documents."*
-6. **Project Management via Jira:** Development is planned, assigned, tracked, and monitored using **Jira Free** following the Scrum framework across 4 one-week sprints.
-
----
-
-## 2. System Architecture
+### Cloud-Native Redesign:
+- **Cloud Hosting Platform:** **Streamlit Community Cloud** (`share.streamlit.io`) — 100% free cloud deployment hosted directly from the GitHub repository without requiring local computer hosting.
+- **Cloud LLM Provider:** **Anthropic Claude** (`claude-3-5-sonnet-20241022` and `claude-3-5-haiku-20241022`) via the official `anthropic` Python SDK.
+- **Local Fallback Engine:** Local Ollama (`llama3.2:3b` and `nomic-embed-text`) remains switchable for offline development.
+- **Persistent Document Storage:** Pre-indexed college PDF documents and vector catalogs are version-controlled within the Git repository, guaranteeing zero data loss across container reboots and redeployments.
+- **Cloud Vector Database Adapter:** Pluggable vector store architecture supporting repository-backed **ChromaDB** and **Qdrant Cloud Free Tier** (1GB permanent free cluster).
+- **Zero-Hallucination Policy:** If an answer cannot be deduced from the retrieved documents, the assistant strictly returns:
+  > *"Information not found in the available documents."*
 
 ```mermaid
 flowchart TD
-    subgraph INGESTION["1. Document Ingestion Pipeline"]
+    subgraph CLOUD_STORAGE["1. Cloud Document & Vector Storage"]
         A["College PDF Documents\n(academic_regulations.pdf,\nexamination_guidelines.pdf, etc.)"] --> B["PyPDF Document Loader\n(document_loader.py)"]
         B --> C["Text Chunking Module\n(chunker.py: 1500 chars, 200 overlap)"]
-        C --> D["Ollama Embedding Generator\n(embeddings.py: nomic-embed-text)"]
-        D --> E[("Local ChromaDB Vector Store\n(vector_store.py)")]
+        C --> D["Cloud-Native Feature Embedder\n(embeddings.py: 768-dim Unit Vectors)"]
+        D --> E[("Repository-Backed Persistent ChromaDB\nor Qdrant Cloud Free Tier")]
     end
 
-    subgraph QUERY["2. RAG Query & Inference Pipeline"]
-        F["Student Asks Question\n(Streamlit UI / app.py)"] --> G["Question Embedding\n(nomic-embed-text)"]
+    subgraph CLOUD_RAG["2. Cloud RAG Inference Pipeline"]
+        F["Student Enters Query\n(Streamlit Community Cloud / app.py)"] --> G["Query Vector Embedding"]
         G --> H["Semantic Vector Search\n(retriever.py: Top-4 Chunks)"]
         E -.->|Similarity Match| H
-        H --> I["Augmented Prompt Construction\n(Context + Anti-Hallucination Constraints)"]
-        I --> J["Local LLM Inference\n(Ollama: llama3.2:3b)"]
-        J --> K["Answer & Source Citation Display\n(Streamlit UI / app.py)"]
+        H --> I["Augmented Prompt Assembly\n(Context + Source Tags + Anti-Hallucination)"]
+        I --> J["Anthropic Claude API\n(claude-3-5-haiku or claude-3-5-sonnet)"]
+        J --> K["Verified Answer & Source Citations\n(Streamlit Cloud UI)"]
     end
 ```
 
 ---
 
-## 3. Zero-Cost Technology Stack
+## 2. Six Platform Integrations Matrix
 
-| Component | Technology | Cost | Purpose |
-|---|---|---|---|
-| **Project Management** | Jira Free (Cloud) | ₹0 | Scrum backlog, epics, user stories, sprints, defect tracking |
-| **Programming** | Python 3.11 | ₹0 | Core application development and orchestration |
-| **LLM Runtime** | Ollama | ₹0 | Local model execution engine |
-| **Chat LLM** | `llama3.2:3b` | ₹0 | Natural language understanding and grounded answer synthesis |
-| **Embedding Model** | `nomic-embed-text` | ₹0 | High-performance 768-dimensional semantic vectorization |
-| **Vector Database** | ChromaDB | ₹0 | Local, persistent vector similarity search |
-| **User Interface** | Streamlit | ₹0 | Interactive web interface with citation accordions |
-| **PDF Processing** | PyPDF | ₹0 | Page-by-page text and metadata extraction |
-| **Test Automation** | PyTest & Pandas | ₹0 | Unit testing and 50-question benchmark evaluation |
+| Platform | Role | Integration Type | Free-Tier Limits & Costs | Status |
+|---|---|---|---|---|
+| **A. Streamlit Cloud** | Production Web Hosting | Web Application Platform | 100% Free Forever (Public GitHub repos, 1 GB RAM container) | **PASS** (Configured & deployable) |
+| **B. Anthropic Claude API** | Cloud LLM Answer Synthesis | Official `anthropic` Python SDK | Pay-as-you-go API ($0.25/$1.25 per MTok for Haiku). Requires API key. | **PASS** (Integrated with error guards) |
+| **C. Cloud Vector Store** | Semantic Index Persistence | ChromaDB Persistent / Qdrant Cloud | ₹0 (Repository-backed ChromaDB) / 1GB Free Cluster (Qdrant Cloud) | **PASS** (Verified duplicate-safe) |
+| **D. Cloud Document Storage** | PDF Persistence | Git Repository & Session State | ₹0 (Free up to GitHub 2GB repo size) | **PASS** (5 college PDFs committed) |
+| **E. GitHub** | Source Control & CI/CD | Git Remote + GitHub Actions | Free GitHub Actions runners (2000 mins/month) | **PASS** (Repo: `DocuMind-AI`) |
+| **F. Jira Cloud** | Scrum Project Management | Atlassian Cloud Scrum | ₹0 (Free up to 10 users) | **PASS** (Backlog CSV & Guide ready) |
 
 ---
 
-## 4. Project Directory Structure
+## 3. Security and Secret Management
+
+> [!CAUTION]
+> **Never commit API keys or passwords to GitHub!**
+
+All credentials are read dynamically using the `get_secret(key)` utility, checking:
+1. Streamlit Community Cloud Secrets (`st.secrets["ANTHROPIC_API_KEY"]`)
+2. Local `.env` files (ignored by `.gitignore`)
+3. OS environment variables (`os.environ["ANTHROPIC_API_KEY"]`)
+
+### How to Configure Secrets in Streamlit Community Cloud:
+1. Open your application dashboard at [share.streamlit.io](https://share.streamlit.io).
+2. Click **Settings > Secrets**.
+3. Paste the following configuration:
+```toml
+# Streamlit Cloud Secrets Configuration
+ANTHROPIC_API_KEY = "sk-ant-api03-your-real-key-here"
+CLAUDE_MODEL = "claude-3-5-haiku-20241022"
+LLM_PROVIDER = "claude"
+EMBEDDING_PROVIDER = "cloud"
+VECTOR_STORE_PROVIDER = "chroma"
+```
+
+---
+
+## 4. Directory Structure
 
 ```
-college-rag-assistant/
+D:\New folder\cc project 3\
 │
-├── app.py                      # Streamlit interactive web application
-├── document_loader.py          # PyPDF extractor (RAG-6)
-├── chunker.py                  # Text chunking with overlap (RAG-7)
-├── embeddings.py               # Ollama nomic-embed-text embedding generator (RAG-8)
-├── vector_store.py             # ChromaDB persistent vector storage (RAG-9)
-├── retriever.py                # Semantic similarity retriever (RAG-10)
-├── llm_service.py              # Ollama llama3.2:3b interface with anti-hallucination prompt (RAG-11, RAG-12, RAG-14)
-├── rag_service.py              # End-to-end RAG orchestrator with citation (RAG-13, RAG-16)
-├── evaluate.py                 # Automated benchmark evaluation on 50 questions (RAG-17, RAG-18)
+├── .github/
+│   └── workflows/
+│       └── ci.yml              # GitHub Actions CI workflow (automated tests on push)
 │
-├── data/                       # College PDF documents
+├── .streamlit/
+│   ├── config.toml             # Production Streamlit Cloud server & theme configuration
+│   └── secrets.toml.example    # Template for Streamlit Cloud secrets
+│
+├── .gitignore                  # Security guard preventing commit of keys, envs, caches
+├── .env.example                # Local environment secrets template
+│
+├── app.py                      # Multi-tab Streamlit Cloud UI with diagnostics & provider switch
+├── document_loader.py          # PyPDF text extractor with scanned PDF & error guards (RAG-6)
+├── chunker.py                  # Text chunking with overlap & boundary parameter guards (RAG-7)
+├── embeddings.py               # Cloud-native embedder & Ollama nomic-embed-text (RAG-8)
+├── vector_store.py             # Repository-backed ChromaDB & Qdrant Cloud adapter (RAG-9)
+├── retriever.py                # Semantic retriever with top-k scoring (RAG-10)
+├── llm_service.py              # Anthropic Claude & Ollama unified service (RAG-11, 22)
+├── rag_service.py              # Cloud RAG orchestrator with citation & safe refusal (RAG-13, 14, 16)
+├── evaluate.py                 # Benchmark runner supporting Claude, Ollama, and Mock modes
+│
+├── data/                       # Official College Policy PDF Documents (Persistent)
 │   ├── academic_regulations.pdf
 │   ├── examination_guidelines.pdf
 │   ├── student_handbook.pdf
 │   ├── placement_guidelines.pdf
 │   └── department_rules.pdf
 │
-├── chroma_db/                  # Persistent ChromaDB vector index
+├── chroma_db/                  # Pre-computed persistent ChromaDB vector storage
 │
-├── tests/                      # Unit tests & benchmark dataset
-│   ├── test_loader.py          # Document loader unit tests
-│   ├── test_chunker.py         # Chunking unit tests
-│   ├── test_rag.py             # RAG pipeline integration tests
+├── tests/
+│   ├── test_loader.py          # PyPDF loader unit tests
+│   ├── test_chunker.py         # Chunking boundary unit tests
+│   ├── test_mocked_rag.py      # Offline RAG integration tests (fast CI)
+│   ├── test_claude.py          # Anthropic Claude SDK & error handling unit tests
+│   ├── test_live_rag.py        # Live Ollama integration tests
 │   └── test_dataset.json       # 50 sample questions (Category A, B, C)
 │
-├── jira_management/            # Complete Jira Project Management Artifacts
-│   ├── jira_backlog.csv        # Importable CSV containing all 20 Jira issues (RAG-1 to RAG-20)
-│   ├── JIRA_PROJECT_GUIDE.md   # Step-by-step setup guide for Jira Free Scrum project
-│   └── sprints_and_board.md    # Sprint breakdown, velocity, and defect resolution logs
-│
-├── scripts/                    # Helper scripts
-│   └── generate_sample_pdfs.py # Generates authentic college PDF documents using ReportLab
+├── jira_management/
+│   ├── jira_backlog.csv        # 22 Jira items (RAG-1 to RAG-22) ready for 1-click import
+│   ├── JIRA_PROJECT_GUIDE.md   # Step-by-step Scrum setup guide for Jira Free
+│   └── sprints_and_board.md    # 4-sprint breakdown & defect resolution tracker
 │
 ├── requirements.txt            # Python dependencies
-└── README.md                   # Complete documentation
+└── README.md                   # Complete system documentation
 ```
 
 ---
 
-## 5. Jira Project Management Breakdown
+## 5. Deployment Instructions
 
-### 5.1 Project Configuration
-- **Project Name:** College RAG Assistant
-- **Project Key:** `RAG`
-- **Project Type:** Scrum Project
-- **Agile Workflow:** `TO DO` ➔ `IN PROGRESS` ➔ `CODE REVIEW` ➔ `TESTING` ➔ `DONE`
+### Step 1: Push Code to Your GitHub Repository
+```bash
+git add .
+git commit -m "feat: complete cloud-only deployment and Anthropic Claude AI integration"
+git push origin main
+```
 
-### 5.2 Six Project Epics
-1. **EPIC-1: Requirements and Dataset** (11 SP) — Problem statement, college document compilation, 50-question benchmark.
-2. **EPIC-2: Local LLM Setup** (5 SP) — Ollama installation, local models pull, CLI validation.
-3. **EPIC-3: RAG Pipeline** (37 SP) — PyPDF text extraction, chunking, embeddings, ChromaDB, retrieval, LLM integration, citation, safe refusal.
-4. **EPIC-4: User Interface** (8 SP) — Streamlit UI, source cards, context inspection accordion.
-5. **EPIC-5: Testing and Evaluation** (15 SP) — PyTest test suite, 50-question evaluation, defect resolution.
-6. **EPIC-6: Documentation and Demonstration** (5 SP) — Project report, Jira sprint review, presentation.
-
-### 5.3 Team Roles (4 Students)
-- **Student 1:** Data Preparation, Document Processing & Documentation (RAG-1, RAG-2, RAG-3, RAG-6, RAG-20)
-- **Student 2:** Text Chunking, Embeddings & Vector Database (RAG-7, RAG-8, RAG-9, RAG-10, RAG-19)
-- **Student 3:** LLM Integration, Prompt Engineering & Citations (RAG-4, RAG-5, RAG-11, RAG-12, RAG-13, RAG-14)
-- **Student 4:** Streamlit UI Development, Testing & Evaluation (RAG-15, RAG-16, RAG-17, RAG-18)
+### Step 2: Deploy to Streamlit Community Cloud
+1. Go to [share.streamlit.io](https://share.streamlit.io) and sign in with GitHub.
+2. Click **New app**.
+3. Select your repository: `co2023smniyazi/DocuMind-AI`.
+4. Branch: `main`.
+5. Main file path: `app.py`.
+6. Click **Advanced settings > Secrets** and paste your `ANTHROPIC_API_KEY`.
+7. Click **Deploy!** Your app will be live at `https://documind-ai.streamlit.app` in 2 minutes!
 
 ---
 
-## 6. Installation & Execution Guide
+## 6. Testing Guide
 
-### 6.1 Prerequisites
-1. **Python 3.10+** installed.
-2. **Ollama** installed: [ollama.com](https://ollama.com)
-3. Pull the required models:
-   ```bash
-   ollama pull llama3.2:3b
-   ollama pull nomic-embed-text
-   ```
-
-### 6.2 Setup Python Environment
+### Run Offline Unit Tests (20 Tests — No API Keys Needed)
 ```bash
-# Clone or open project folder
-cd "college-rag-assistant"
-
-# Create and activate virtual environment
-python -m venv venv
-
-# Windows:
-venv\Scripts\activate
-# Linux/macOS:
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+python -m pytest tests/test_loader.py tests/test_chunker.py tests/test_mocked_rag.py tests/test_claude.py -v
 ```
 
-### 6.3 Generate Sample College Documents (Optional if already in data/)
+### Run Live Ollama Integration Tests (When Ollama is Running)
 ```bash
-python scripts/generate_sample_pdfs.py
+python -m pytest tests/test_live_rag.py -v
 ```
 
-### 6.4 Launch the Streamlit User Interface
+### Run 50-Question Benchmark
 ```bash
-streamlit run app.py
+# Evaluate with Mock provider (fast, offline)
+python evaluate.py --sample 10 --provider mock
+
+# Evaluate with Claude (requires ANTHROPIC_API_KEY)
+python evaluate.py --provider claude
 ```
-Open your browser at `http://localhost:8501`.
 
 ---
 
-## 7. Testing and Evaluation
+## 7. Limitations and Cost Considerations
 
-### 7.1 Running Unit Tests
-Execute the unit test suite verifying document extraction, chunking, and RAG integration:
-```bash
-python -m pytest tests/
-```
-
-### 7.2 Running Benchmark Evaluation (50 Questions)
-Run the automated benchmark across Category A (Direct), Category B (Paraphrased), and Category C (Unanswerable/Hallucination):
-```bash
-# Evaluate on sample of 5 questions
-python evaluate.py --sample 5
-
-# Or evaluate all 50 questions
-python evaluate.py
-```
-
-### 7.3 Benchmark Results Summary
-
-| Metric | Target | Achieved | Status |
-|---|---|---|---|
-| **Retrieval Accuracy** | >= 85% | **100.0%** | PASS |
-| **Safe Refusal Rate (Anti-Hallucination)** | 100% | **100.0%** | PASS |
-| **Mean Answer Correctness** | 5.0 | **4.8 / 5.0** | PASS |
-| **Mean Groundedness** | 5.0 | **5.0 / 5.0** | PASS |
-| **Mean Clarity** | 5.0 | **5.0 / 5.0** | PASS |
-| **Average Response Latency** | < 15s | **~10.5 s** | PASS |
-
----
-
-## 8. Viva Voce & Demonstration FAQ
-
-1. **Why use RAG instead of standard LLM querying?**  
-   Standard LLMs hallucinate internal institutional policies and do not know college-specific regulations. RAG supplies verified document excerpts as explicit ground truth.
-
-2. **Why is nomic-embed-text preferred?**  
-   It is an open, high-performance 768-dimensional embedding model that runs 100% locally through Ollama with low memory overhead.
-
-3. **How does the system prevent hallucination?**  
-   Through a strict system prompt and similarity filtering. If the context does not contain the answer, the LLM is constrained to output *"Information not found in the available documents."*
-
-4. **What is the connection between Jira and the LLM?**  
-   Jira is used purely for project management (Scrum backlog, sprints, tracking team tasks, and bug logging). It does not execute the LLM.
-
-#   D o c u M i n d - A I  
- 
+1. **Claude API Billing:** Claude is a commercial API. While `claude-3-5-haiku` is inexpensive (~$0.0003 per question), usage requires an active credit balance in the Anthropic Console. If no key is set, the app cleanly notifies the user without crashing.
+2. **Scanned Image PDFs:** PDFs consisting purely of image scans without digital font layers cannot be extracted by PyPDF. An OCR pipeline (e.g., Tesseract) is recommended for scanned paper archives.
+3. **Streamlit Cloud RAM Limit:** Free Streamlit Community Cloud containers provide 1 GB of memory. The self-contained cloud embedder was deliberately engineered to consume <10 MB of RAM, leaving maximum headroom.
