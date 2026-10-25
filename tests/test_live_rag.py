@@ -7,19 +7,26 @@ Skips gracefully if local Ollama daemon is offline.
 import pytest
 from rag_service import RAGService
 from embeddings import OllamaEmbedder
-from llm_service import UNKNOWN_ANSWER_PHRASE
+from llm_service import OllamaLLMService, UNKNOWN_ANSWER_PHRASE
 
 
 @pytest.fixture(scope="module")
-def live_rag():
+def live_rag(tmp_path_factory):
     embedder = OllamaEmbedder()
     if not embedder.is_available():
-        pytest.skip("Local Ollama service is not reachable. Skipping live integration tests.")
+        pytest.skip("Local Ollama embedding service is not reachable. Skipping live integration tests.")
 
-    service = RAGService()
-    stats = service.get_stats()
-    if stats["total_chunks"] == 0:
-        service.index_directory("./data")
+    llm = OllamaLLMService()
+    if not llm.is_available():
+        pytest.skip("Local Ollama LLM service is not reachable. Skipping live integration tests.")
+
+    temp_dir = str(tmp_path_factory.mktemp("ollama_live_chroma"))
+    service = RAGService(
+        llm_provider="ollama",
+        embed_provider="ollama",
+        vector_store_dir=temp_dir
+    )
+    service.index_directory("./data")
     return service
 
 
@@ -48,4 +55,3 @@ def test_live_hallucination_prevention_unanswerable(live_rag):
         UNKNOWN_ANSWER_PHRASE.lower() in res["answer"].lower()
         or "not found" in res["answer"].lower()
     )
-

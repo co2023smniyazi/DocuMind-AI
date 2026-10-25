@@ -2,9 +2,9 @@ name: DocuMind AI CI Test Suite
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, free-cloud-deploy ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, free-cloud-deploy ]
 
 jobs:
   test:
@@ -25,7 +25,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Run Offline Unit Tests
+    - name: Run Full Offline Unit Test Suite
       run: |
-        python -m pytest tests/test_loader.py tests/test_chunker.py tests/test_mocked_rag.py -v
-
+        python -m pytest tests/test_loader.py tests/test_chunker.py tests/test_mocked_rag.py tests/test_claude.py tests/test_cloud_rag.py -v

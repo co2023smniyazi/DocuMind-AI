@@ -1,6 +1,7 @@
 """
 Unit and Integration Tests for Anthropic Claude AI Service (Requirement 2)
 Verifies Claude integration, prompt structure, error handling, and secret management.
+Enforces that Claude is OFF by default (Rs 0 budget policy).
 """
 
 import os
@@ -9,9 +10,20 @@ from unittest.mock import MagicMock, patch
 from llm_service import ClaudeLLMService, get_llm_service, UNKNOWN_ANSWER_PHRASE
 
 
+def test_claude_service_disabled_by_default():
+    # By default, ENABLE_CLAUDE is not set, so service must be disabled
+    service = ClaudeLLMService(api_key="sk-ant-test-key-mock")
+    assert service.is_enabled() is False
+    assert service.is_available() is False
+
+    with pytest.raises(RuntimeError) as exc_info:
+        service.generate_response("Test prompt")
+    assert "disabled by default" in str(exc_info.value)
+
+
 def test_claude_service_missing_api_key():
-    # When no key is provided, is_available must be False
-    service = ClaudeLLMService(api_key="")
+    # When enabled but no key is provided, is_available must be False
+    service = ClaudeLLMService(api_key="", is_enabled=True)
     assert service.is_available() is False
 
     with pytest.raises(RuntimeError) as exc_info:
@@ -20,13 +32,13 @@ def test_claude_service_missing_api_key():
 
 
 def test_claude_service_custom_model():
-    service = ClaudeLLMService(api_key="sk-ant-test-key-mock", model_name="claude-3-5-sonnet-20241022")
+    service = ClaudeLLMService(api_key="sk-ant-test-key-mock", model_name="claude-3-5-sonnet-20241022", is_enabled=True)
     assert service.model_name == "claude-3-5-sonnet-20241022"
     assert service.is_available() is True
 
 
 def test_claude_service_mocked_success():
-    service = ClaudeLLMService(api_key="sk-ant-test-key-mock")
+    service = ClaudeLLMService(api_key="sk-ant-test-key-mock", is_enabled=True)
 
     # Mock the anthropic client and messages.create
     mock_block = MagicMock()
@@ -47,7 +59,7 @@ def test_claude_service_mocked_success():
 
 
 def test_claude_service_mocked_refusal():
-    service = ClaudeLLMService(api_key="sk-ant-test-key-mock")
+    service = ClaudeLLMService(api_key="sk-ant-test-key-mock", is_enabled=True)
 
     mock_block = MagicMock()
     mock_block.type = "text"
@@ -65,7 +77,7 @@ def test_claude_service_mocked_refusal():
 
 
 def test_claude_service_mocked_rate_limit_error():
-    service = ClaudeLLMService(api_key="sk-ant-test-key-mock")
+    service = ClaudeLLMService(api_key="sk-ant-test-key-mock", is_enabled=True)
 
     import anthropic
     mock_client = MagicMock()
@@ -82,7 +94,7 @@ def test_claude_service_mocked_rate_limit_error():
 
     with pytest.raises(RuntimeError) as exc_info:
         service.generate_response("Test prompt")
-    assert "Rate Limit Exceeded" in str(exc_info.value)
+    assert "rate limit exceeded" in str(exc_info.value).lower()
 
 
 def test_factory_get_llm_service():
@@ -93,4 +105,3 @@ def test_factory_get_llm_service():
     assert service_mock.is_available() is True
     ans = service_mock.generate_response("any prompt")
     assert len(ans) > 0
-

@@ -7,7 +7,7 @@ Supports Anthropic Claude, Cloud Embeddings, ChromaDB / Qdrant Cloud, and safe r
 
 import os
 from typing import Dict, Any, List, Optional
-from document_loader import load_documents_from_directory, load_pdf_with_metadata
+from document_loader import load_documents_from_directory, load_pdf_with_metadata, load_pdf_from_bytes
 from chunker import chunk_document_pages
 from embeddings import BaseEmbedder, get_embedder
 from vector_store import BaseVectorStore, get_vector_store
@@ -28,11 +28,13 @@ class RAGService:
         vector_store_dir: str = "./chroma_db",
         top_k: int = 4
     ):
+        self.embedder: BaseEmbedder = get_embedder(provider=embed_provider)
+        embed_dim = getattr(self.embedder, "dimension", 384)
         self.vector_store: BaseVectorStore = get_vector_store(
             provider=vector_provider,
-            persist_directory=vector_store_dir
+            persist_directory=vector_store_dir,
+            embedding_dimension=embed_dim
         )
-        self.embedder: BaseEmbedder = get_embedder(provider=embed_provider)
         self.retriever = SemanticRetriever(
             vector_store=self.vector_store,
             embedder=self.embedder
@@ -170,6 +172,62 @@ class RAGService:
             return {
                 "status": "error",
                 "message": f"Embedding failure: {e}",
+                "filename": filename,
+                "indexed_chunks": 0
+            }
+
+    def index_pdf_bytes(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        chunk_size: int = 1500,
+        overlap: int = 200
+    ) -> Dict[str, Any]:
+        """
+        Indexes a PDF directly from in-memory bytes without persisting raw PDF to disk.
+        Safely clears existing chunks for the same filename to avoid duplication.
+        All text chunks and source metadata are stored in the vector database payload.
+        """
+        pages_data, summary = load_pdf_from_bytes(file_bytes, filename)
+
+        if summary.get("error"):
+            return {
+                "status": "error",
+                "message": summary["error"],
+                "filename": filename,
+                "indexed_chunks": 0
+            }
+
+        if summary.get("is_scanned"):
+            return {
+                "status": "warning",
+                "message": "Document contains no extractable text. Scanned image PDFs require an OCR engine.",
+                "filename": filename,
+                "indexed_chunks": 0
+            }
+
+        chunks = chunk_document_pages(pages_data, chunk_size=chunk_size, overlap=overlap)
+        if not chunks:
+            return {
+                "status": "empty",
+                "message": "Document produced no text chunks.",
+                "filename": filename,
+                "indexed_chunks": 0
+            }
+
+        try:
+            texts = [c["text"] for c in chunks]
+            embeddings = self.embedder.get_embeddings_batch(texts)
+            count = self.vector_store.safe_reindex_document(chunks, embeddings)
+            return {
+                "status": "success",
+                "indexed_chunks": count,
+                "filename": filename
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Embedding or storage failure: {e}",
                 "filename": filename,
                 "indexed_chunks": 0
             }

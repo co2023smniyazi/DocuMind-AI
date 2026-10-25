@@ -1,20 +1,22 @@
 """
-LLM Service Module (RAG-11, RAG-12, RAG-14, RAG-22)
-Provides unified interface for both Anthropic Claude (Cloud-native) and local Ollama.
-Supports dynamic provider switching, secure secret handling, and anti-hallucination enforcement.
+LLM Service Module (RAG-11, RAG-12, RAG-14, Cloud-Native Free Providers)
+Primary Cloud: Google Gemini (Free Tier via google-genai SDK, Flash / Flash-Lite)
+Secondary Cloud: Groq (Developer Free Tier via groq SDK, Llama-3.3-70B / 3.1-8B)
+Optional: Anthropic Claude (Active ONLY if ENABLE_CLAUDE=true and API key exists)
+Local Fallback: Ollama (llama3.2:3b)
+Test-Only: MockLLMService (For deterministic offline CI tests)
 """
 
 import os
+import time
 from typing import Dict, Any, Optional
 from abc import ABC, abstractmethod
 
-# Helper to read from environment or Streamlit secrets safely
+
 def get_secret(key: str, default: Optional[str] = None) -> Optional[str]:
-    # Check OS environment first
     val = os.environ.get(key)
     if val:
         return val
-    # Check Streamlit secrets if running inside Streamlit
     try:
         import streamlit as st
         if hasattr(st, "secrets") and key in st.secrets:
@@ -41,16 +43,13 @@ class BaseLLMService(ABC):
 
     @abstractmethod
     def is_available(self) -> bool:
-        """Checks if the provider is configured and reachable."""
         pass
 
     @abstractmethod
     def generate_response(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Generates an answer from prompt."""
         pass
 
     def build_prompt(self, question: str, context: str) -> str:
-        """Formats the context and question prompt."""
         return f"""CONTEXT:
 {context}
 
@@ -58,10 +57,157 @@ QUESTION:
 {question}"""
 
 
+class GeminiLLMService(BaseLLMService):
+    """
+    Primary Cloud LLM Service using Google AI Studio Free Tier (google-genai SDK).
+    Default Model: gemini-2.0-flash (Verified Free Tier: 15 RPM, 1,000,000 TPM, 1,500 RPD).
+    Official limits: https://ai.google.dev/pricing
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model_name: Optional[str] = None,
+        temperature: float = 0.1
+    ):
+        self.api_key = api_key or get_secret("GEMINI_API_KEY")
+        self.model_name = model_name or get_secret("GEMINI_MODEL", "gemini-2.0-flash")
+        self.temperature = temperature
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None and self.api_key:
+            from google import genai
+            self._client = genai.Client(api_key=self.api_key)
+        return self._client
+
+    def is_available(self) -> bool:
+        return bool(self.api_key and len(self.api_key.strip()) > 10)
+
+    def generate_response(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        if not self.is_available():
+            raise RuntimeError(
+                "Google Gemini API key is not configured. "
+                "Please add GEMINI_API_KEY in your Streamlit Secrets (share.streamlit.io) or local .env file. "
+                "Get a free key (Rs 0, no credit card required) at https://aistudio.google.com/apikey"
+            )
+
+        from google import genai
+        from google.genai import types
+        from google.genai import errors
+
+        client = self._get_client()
+        sys_instruction = system_prompt or SYSTEM_PROMPT
+
+        # Exponential backoff for 429 rate limit
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                response = client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=sys_instruction,
+                        temperature=self.temperature,
+                        max_output_tokens=1024,
+                    )
+                )
+                text = response.text
+                return text.strip() if text else UNKNOWN_ANSWER_PHRASE
+            except Exception as e:
+                err_str = str(e).lower()
+                is_rate_limit = (
+                    "429" in err_str
+                    or "quota" in err_str
+                    or "resource_exhausted" in err_str
+                    or getattr(e, "code", None) == 429
+                )
+                if is_rate_limit and attempt < max_retries:
+                    sleep_time = (attempt + 1) * 2.5
+                    time.sleep(sleep_time)
+                    continue
+
+                if is_rate_limit:
+                    raise RuntimeError(
+                        "Google Gemini Free-Tier rate limit reached (15 RPM / 1,500 RPD). "
+                        "Please wait a few seconds before asking another question. "
+                        "Official limits: https://ai.google.dev/pricing"
+                    ) from e
+                raise RuntimeError(f"Google Gemini API error: {e}") from e
+
+
+class GroqLLMService(BaseLLMService):
+    """
+    Secondary Free Cloud LLM Service using Groq Cloud Free Tier.
+    Default Model: llama-3.3-70b-versatile or llama-3.1-8b-instant.
+    Official limits: https://console.groq.com/docs/rate-limits (30 RPM, free of charge).
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model_name: Optional[str] = None,
+        temperature: float = 0.1
+    ):
+        self.api_key = api_key or get_secret("GROQ_API_KEY")
+        self.model_name = model_name or get_secret("GROQ_MODEL", "llama-3.3-70b-versatile")
+        self.temperature = temperature
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None and self.api_key:
+            from groq import Groq
+            self._client = Groq(api_key=self.api_key)
+        return self._client
+
+    def is_available(self) -> bool:
+        return bool(self.api_key and len(self.api_key.strip()) > 10)
+
+    def generate_response(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        if not self.is_available():
+            raise RuntimeError(
+                "Groq API key is not configured. "
+                "Please add GROQ_API_KEY in your Streamlit Secrets or local .env file. "
+                "Get a free key at https://console.groq.com/keys"
+            )
+
+        client = self._get_client()
+        sys_instruction = system_prompt or SYSTEM_PROMPT
+
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                chat_completion = client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": sys_instruction},
+                        {"role": "user", "content": prompt}
+                    ],
+                    model=self.model_name,
+                    temperature=self.temperature,
+                    max_tokens=1024
+                )
+                content = chat_completion.choices[0].message.content
+                return content.strip() if content else UNKNOWN_ANSWER_PHRASE
+            except Exception as e:
+                err_str = str(e).lower()
+                is_rate_limit = "429" in err_str or "rate limit" in err_str
+                if is_rate_limit and attempt < max_retries:
+                    time.sleep((attempt + 1) * 2)
+                    continue
+                if is_rate_limit:
+                    raise RuntimeError(
+                        "Groq Free Tier rate limit reached (30 RPM). "
+                        "Please wait a few seconds and try again. "
+                        "Official limits: https://console.groq.com/docs/rate-limits"
+                    ) from e
+                raise RuntimeError(f"Groq API error: {e}") from e
+
+
 class ClaudeLLMService(BaseLLMService):
     """
-    Cloud LLM service powered by Anthropic Claude via official Python SDK.
-    Supports Claude 3.5 Sonnet, Claude 3.5 Haiku, and Claude 3 Haiku.
+    Anthropic Claude Service (OPTIONAL, PAID API, OFF BY DEFAULT).
+    Hard rule: Active ONLY when ENABLE_CLAUDE=true and ANTHROPIC_API_KEY is provided.
+    Pricing: Paid pay-as-you-go per token (Official: https://www.anthropic.com/pricing).
     """
 
     def __init__(
@@ -69,13 +215,24 @@ class ClaudeLLMService(BaseLLMService):
         api_key: Optional[str] = None,
         model_name: Optional[str] = None,
         temperature: float = 0.1,
-        max_tokens: int = 1024
+        max_tokens: int = 1024,
+        is_enabled: Optional[bool] = None
     ):
-        self.api_key = api_key or get_secret("ANTHROPIC_API_KEY")
+        self.api_key = api_key if api_key is not None else get_secret("ANTHROPIC_API_KEY")
         self.model_name = model_name or get_secret("CLAUDE_MODEL", "claude-3-5-haiku-20241022")
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self._is_enabled_override = is_enabled
         self._client = None
+
+    def is_enabled(self) -> bool:
+        if self._is_enabled_override is not None:
+            return self._is_enabled_override
+        val = (get_secret("ENABLE_CLAUDE", "false") or "").strip().lower()
+        return val in ("true", "1", "yes")
+
+    def is_available(self) -> bool:
+        return bool(self.is_enabled() and self.api_key and len(self.api_key.strip()) > 10)
 
     def _get_client(self):
         if self._client is None and self.api_key:
@@ -83,20 +240,15 @@ class ClaudeLLMService(BaseLLMService):
             self._client = anthropic.Anthropic(api_key=self.api_key)
         return self._client
 
-    def is_available(self) -> bool:
-        """Verifies if Anthropic API key is provided."""
-        return bool(self.api_key and len(self.api_key.strip()) > 10)
-
     def generate_response(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """
-        Calls Anthropic Claude Messages API with robust error handling.
-        """
-        if not self.is_available():
+        if not self.is_enabled():
             raise RuntimeError(
-                "Anthropic API key is not configured. "
-                "Please set ANTHROPIC_API_KEY in your environment variables or Streamlit Secrets (share.streamlit.io). "
-                "Alternatively, select another provider in settings."
+                "Anthropic Claude is disabled by default to prevent unexpected charges (Rs 0 budget policy). "
+                "To enable it explicitly, set ENABLE_CLAUDE=true in secrets. "
+                "Official pricing: https://www.anthropic.com/pricing"
             )
+        if not self.api_key or len(self.api_key.strip()) == 0:
+            raise RuntimeError("Anthropic API key is not configured.")
 
         import anthropic
         client = self._get_client()
@@ -108,44 +260,20 @@ class ClaudeLLMService(BaseLLMService):
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
                 system=sys_instruction,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
+                messages=[{"role": "user", "content": prompt}]
             )
-            # Extract generated response text
             if message and message.content:
                 text_blocks = [b.text for b in message.content if getattr(b, "type", "") == "text" or hasattr(b, "text")]
                 return "".join(text_blocks).strip()
             return UNKNOWN_ANSWER_PHRASE
-
-        except anthropic.AuthenticationError as ae:
-            raise RuntimeError(
-                f"Anthropic API Authentication Failed: Invalid API key ({ae}). "
-                "Verify your ANTHROPIC_API_KEY in Streamlit Secrets or .env file."
-            ) from ae
-        except anthropic.RateLimitError as rle:
-            raise RuntimeError(
-                f"Anthropic API Rate Limit Exceeded: {rle}. Please wait a moment and try again."
-            ) from rle
-        except anthropic.APITimeoutError as te:
-            raise RuntimeError(
-                f"Anthropic API request timed out: {te}. Please retry."
-            ) from te
-        except anthropic.APIConnectionError as ace:
-            raise RuntimeError(
-                f"Anthropic API connection error: {ace}. Check network connectivity."
-            ) from ace
-        except anthropic.APIStatusError as ase:
-            raise RuntimeError(
-                f"Anthropic API status error {ase.status_code}: {ase.message}"
-            ) from ase
         except Exception as e:
             raise RuntimeError(f"Anthropic Claude API Error: {e}") from e
 
 
 class OllamaLLMService(BaseLLMService):
     """
-    Local fallback LLM service using locally installed Ollama.
+    Local fallback LLM service using locally installed Ollama (llama3.2:3b).
+    Not available in Streamlit Community Cloud.
     """
 
     def __init__(self, model_name: str = "llama3.2:3b", temperature: float = 0.1):
@@ -167,7 +295,6 @@ class OllamaLLMService(BaseLLMService):
         import ollama
         sys_instruction = system_prompt or SYSTEM_PROMPT
         full_content = f"{sys_instruction}\n\n{prompt}"
-
         try:
             response = ollama.chat(
                 model=self.model_name,
@@ -176,10 +303,7 @@ class OllamaLLMService(BaseLLMService):
             )
             return response["message"]["content"].strip()
         except Exception as e:
-            raise RuntimeError(
-                f"Error communicating with local LLM '{self.model_name}': {e}. "
-                "Ensure Ollama is running ('ollama serve') or switch to Claude in cloud settings."
-            ) from e
+            raise RuntimeError(f"Local Ollama error: {e}. Note: Ollama cannot run on Streamlit Cloud.") from e
 
 
 class MockLLMService(BaseLLMService):
@@ -204,30 +328,31 @@ class MockLLMService(BaseLLMService):
 
 def get_llm_service(provider: Optional[str] = None, **kwargs) -> BaseLLMService:
     """
-    Factory function to instantiate the selected LLM provider.
-    Priority:
-    1. Explicit provider parameter
-    2. Environment / Secrets variable LLM_PROVIDER
-    3. Auto: if ANTHROPIC_API_KEY is present -> Claude; else -> Ollama
+    Factory function for LLM services.
+    Default: GeminiLLMService (Free-tier Google GenAI).
     """
-    selected_provider = (provider or get_secret("LLM_PROVIDER", "auto")).lower()
+    selected = (provider or get_secret("LLM_PROVIDER", "gemini")).lower()
 
-    if selected_provider == "claude":
+    if selected == "gemini":
+        return GeminiLLMService(**kwargs)
+    elif selected == "groq":
+        return GroqLLMService(**kwargs)
+    elif selected == "claude":
         return ClaudeLLMService(**kwargs)
-    elif selected_provider == "ollama":
+    elif selected == "ollama":
         return OllamaLLMService(**kwargs)
-    elif selected_provider == "mock":
+    elif selected == "mock" or selected == "test":
         return MockLLMService(**kwargs)
     else:
-        # Auto-detect
-        api_key = get_secret("ANTHROPIC_API_KEY")
-        if api_key and len(api_key.strip()) > 10:
-            return ClaudeLLMService(**kwargs)
-        else:
-            # Fall back to Ollama or Mock
-            ollama_service = OllamaLLMService(**kwargs)
-            return ollama_service
+        # Auto-fallback: check if Gemini key is present, else Groq, else Mock
+        if get_secret("GEMINI_API_KEY"):
+            return GeminiLLMService(**kwargs)
+        if get_secret("GROQ_API_KEY"):
+            return GroqLLMService(**kwargs)
+        # Default to GeminiLLMService
+        return GeminiLLMService(**kwargs)
 
 
 # Backwards compatibility alias
-LLMService = ClaudeLLMService
+LLMService = GeminiLLMService
+

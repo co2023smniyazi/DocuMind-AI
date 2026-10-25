@@ -1,11 +1,12 @@
 """
-Embedding Generator Module (RAG-8, Cloud-Ready)
-Provides both Local Ollama Embeddings (nomic-embed-text) and
-Cloud-Native Self-Contained Semantic Embeddings for zero-daemon cloud deployment.
+Embedding Generator Module (RAG-8, Cloud-Native Semantic Embeddings)
+Primary: FastEmbed ONNX (BAAI/bge-small-en-v1.5, 384-dim, no API key, runs in Streamlit Cloud 1GB RAM)
+Secondary: Google Gemini text-embedding-004 (768-dim, Free Tier via google-genai)
+Local Fallback: Ollama nomic-embed-text (768-dim)
+Test-Only: TestDeterministicEmbedder (Exclusively for unit tests)
 """
 
 import os
-import re
 import math
 import hashlib
 from typing import List, Optional
@@ -28,6 +29,11 @@ def get_secret(key: str, default: Optional[str] = None) -> Optional[str]:
 class BaseEmbedder(ABC):
     """Abstract base class for vector embedding engines."""
 
+    @property
+    @abstractmethod
+    def dimension(self) -> int:
+        pass
+
     @abstractmethod
     def is_available(self) -> bool:
         pass
@@ -41,13 +47,101 @@ class BaseEmbedder(ABC):
         pass
 
 
+class FastEmbedEmbedder(BaseEmbedder):
+    """
+    Production Cloud Embedding Service powered by FastEmbed ONNX runtime.
+    Model: BAAI/bge-small-en-v1.5 (384 dimensions, cosine distance).
+    Zero API key required; runs locally or inside Streamlit Community Cloud (within 1GB RAM).
+    """
+
+    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5", cache_dir: Optional[str] = None):
+        self.model_name = model_name
+        self.cache_dir = cache_dir or os.path.abspath("./fastembed_cache")
+        self._model = None
+        self._dim = 384
+
+    @property
+    def dimension(self) -> int:
+        return self._dim
+
+    def _get_model(self):
+        if self._model is None:
+            from fastembed import TextEmbedding
+            os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+            self._model = TextEmbedding(model_name=self.model_name, cache_dir=self.cache_dir)
+        return self._model
+
+    def is_available(self) -> bool:
+        try:
+            self._get_model()
+            return True
+        except Exception:
+            return False
+
+    def get_embedding(self, text: str) -> List[float]:
+        cleaned = text.replace("\n", " ").strip() if text else "empty"
+        model = self._get_model()
+        embs = list(model.embed([cleaned]))
+        return [float(x) for x in embs[0]]
+
+    def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        if not texts:
+            return []
+        cleaned = [t.replace("\n", " ").strip() or "empty" for t in texts]
+        model = self._get_model()
+        embs = list(model.embed(cleaned))
+        return [[float(x) for x in e] for e in embs]
+
+
+class GeminiEmbedder(BaseEmbedder):
+    """
+    Cloud embedding engine using Google Gemini API (text-embedding-004, 768 dimensions).
+    Uses Google AI Studio free tier (verified 1,500 RPD, 15 RPM).
+    """
+
+    def __init__(self, api_key: Optional[str] = None, model_name: str = "text-embedding-004"):
+        self.api_key = api_key or get_secret("GEMINI_API_KEY")
+        self.model_name = model_name
+        self._client = None
+        self._dim = 768
+
+    @property
+    def dimension(self) -> int:
+        return self._dim
+
+    def _get_client(self):
+        if self._client is None and self.api_key:
+            from google import genai
+            self._client = genai.Client(api_key=self.api_key)
+        return self._client
+
+    def is_available(self) -> bool:
+        return bool(self.api_key and len(self.api_key.strip()) > 10)
+
+    def get_embedding(self, text: str) -> List[float]:
+        if not self.is_available():
+            raise RuntimeError("Gemini API key is not configured for text-embedding-004.")
+        client = self._get_client()
+        cleaned = text.replace("\n", " ").strip() if text else "empty"
+        res = client.models.embed_content(model=self.model_name, contents=cleaned)
+        return [float(x) for x in res.embedding.values]
+
+    def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        return [self.get_embedding(t) for t in texts]
+
+
 class OllamaEmbedder(BaseEmbedder):
     """
-    Local embedding generator using Ollama nomic-embed-text.
+    Local embedding generator using Ollama nomic-embed-text (768 dimensions).
     """
 
     def __init__(self, model_name: str = "nomic-embed-text"):
         self.model_name = model_name
+        self._dim = 768
+
+    @property
+    def dimension(self) -> int:
+        return self._dim
 
     def is_available(self) -> bool:
         try:
@@ -62,11 +156,10 @@ class OllamaEmbedder(BaseEmbedder):
         import ollama
         try:
             response = ollama.embed(model=self.model_name, input=cleaned)
-            return response["embeddings"][0]
+            return [float(x) for x in response["embeddings"][0]]
         except Exception as e:
             raise RuntimeError(
-                f"Failed to generate embedding with Ollama model '{self.model_name}': {e}. "
-                "Ensure Ollama is running or switch to cloud embedding provider."
+                f"Failed to generate embedding with Ollama model '{self.model_name}': {e}."
             ) from e
 
     def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
@@ -76,68 +169,38 @@ class OllamaEmbedder(BaseEmbedder):
         cleaned_texts = [t.replace("\n", " ").strip() or "empty" for t in texts]
         try:
             response = ollama.embed(model=self.model_name, input=cleaned_texts)
-            return response["embeddings"]
+            return [[float(x) for x in e] for e in response["embeddings"]]
         except Exception:
             return [self.get_embedding(t) for t in cleaned_texts]
 
 
-class CloudSemanticEmbedder(BaseEmbedder):
+class TestDeterministicEmbedder(BaseEmbedder):
     """
-    Cloud-native self-contained semantic feature embedder.
-    Runs 100% in memory on Streamlit Cloud CPU with zero external daemons or API keys.
-    Generates unit-normalized 768-dimensional dense vectors using hashed n-gram token projections.
+    DETERMINISTIC TEST-ONLY EMBEDDER.
+    Never used in production.
+    Used exclusively in automated unit tests for instantaneous, offline, reproducible test execution.
     """
+    __test__ = False
 
-    def __init__(self, dimension: int = 768):
-        self.dimension = dimension
+    def __init__(self, dimension: int = 384):
+        self._dim = dimension
+
+    @property
+    def dimension(self) -> int:
+        return self._dim
 
     def is_available(self) -> bool:
         return True
 
-    STOPWORDS = {
-        "what", "is", "the", "a", "an", "for", "in", "to", "of", "and", "or",
-        "it", "this", "that", "on", "at", "by", "from", "with", "as", "be",
-        "are", "do", "does", "did", "how", "can", "could", "would", "should",
-        "i", "you", "he", "she", "we", "they", "my", "your", "our", "all"
-    }
-
-    def _tokenize(self, text: str) -> List[str]:
-        # Lowercase and clean
-        cleaned = re.sub(r"[^\w\s]", " ", text.lower())
-        raw_tokens = [w for w in cleaned.split() if len(w) > 1 and w not in self.STOPWORDS]
-        # Include subword prefixes/suffixes (3 to 6 chars) for semantic morphological matching
-        features = list(raw_tokens)
-        for t in raw_tokens:
-            if len(t) > 3:
-                features.append(t[:4])
-                features.append(t[-4:])
-        return features
-
     def get_embedding(self, text: str) -> List[float]:
-        if not text or not text.strip():
-            text = "empty"
+        vec = [0.0] * self._dim
+        clean = (text or "test").lower()
+        for idx, ch in enumerate(clean):
+            pos = (ord(ch) * 31 + idx) % self._dim
+            vec[pos] += 1.0
 
-        tokens = self._tokenize(text)
-        vec = [0.0] * self.dimension
-
-        if not tokens:
-            return [1.0 / math.sqrt(self.dimension)] * self.dimension
-
-        for token in tokens:
-            # Hash token into dimension index and signed weight
-            h = int(hashlib.md5(token.encode("utf-8")).hexdigest(), 16)
-            idx = h % self.dimension
-            sign = 1.0 if ((h >> 16) & 1) else -1.0
-            vec[idx] += sign
-
-        # L2 Normalization to unit sphere
-        norm = math.sqrt(sum(x * x for x in vec))
-        if norm > 0:
-            vec = [x / norm for x in vec]
-        else:
-            vec = [1.0 / math.sqrt(self.dimension)] * self.dimension
-
-        return vec
+        norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+        return [round(x / norm, 6) for x in vec]
 
     def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         return [self.get_embedding(t) for t in texts]
@@ -145,19 +208,27 @@ class CloudSemanticEmbedder(BaseEmbedder):
 
 def get_embedder(provider: Optional[str] = None) -> BaseEmbedder:
     """
-    Factory to retrieve the appropriate embedder.
-    Default in Cloud: CloudSemanticEmbedder (zero-cost, runs on Streamlit Cloud CPU).
-    Default in Local: OllamaEmbedder if Ollama is running.
+    Factory function for embedding services.
+    Default: FastEmbedEmbedder (BAAI/bge-small-en-v1.5, 384-dim, no API key).
     """
-    selected = (provider or get_secret("EMBEDDING_PROVIDER", "auto")).lower()
+    selected = (provider or get_secret("EMBEDDING_PROVIDER", "fastembed")).lower()
 
-    if selected == "cloud" or selected == "self_contained":
-        return CloudSemanticEmbedder(dimension=768)
+    if selected == "fastembed" or selected == "cloud":
+        return FastEmbedEmbedder()
+    elif selected == "gemini":
+        gemini = GeminiEmbedder()
+        if gemini.is_available():
+            return gemini
+        return FastEmbedEmbedder()
     elif selected == "ollama":
-        return OllamaEmbedder(model_name="nomic-embed-text")
+        return OllamaEmbedder()
+    elif selected == "test":
+        return TestDeterministicEmbedder()
     else:
-        # Auto-detect: if Ollama is active, use Ollama; otherwise CloudSemanticEmbedder
-        ollama_embedder = OllamaEmbedder()
-        if ollama_embedder.is_available():
-            return ollama_embedder
-        return CloudSemanticEmbedder(dimension=768)
+        return FastEmbedEmbedder()
+
+
+# Deprecated test alias for backward compatibility with test runners
+TestOnlyHashEmbedder = TestDeterministicEmbedder
+
+
