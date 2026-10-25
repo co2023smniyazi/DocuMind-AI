@@ -1,11 +1,13 @@
 """
 Document Loader Module (RAG-6)
 Extracts clean text and metadata from PDF files using PyPDF.
+Supports both file path and in-memory bytes loading.
 Handles missing, encrypted, corrupted, empty, and scanned PDFs gracefully.
 """
 
 import os
-from typing import List, Dict, Any, Tuple
+import io
+from typing import List, Dict, Any, Tuple, Union
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
@@ -21,7 +23,6 @@ def read_pdf(file_path: str) -> str:
     try:
         reader = PdfReader(file_path)
         if reader.is_encrypted:
-            # Attempt decryption with empty password for common restricted PDFs
             try:
                 reader.decrypt("")
             except Exception:
@@ -39,18 +40,15 @@ def read_pdf(file_path: str) -> str:
         return f"[Error reading PDF: {e}]"
 
 
-def load_pdf_with_metadata(file_path: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+def load_pdf_from_bytes(file_bytes: bytes, filename: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    Extracts text page-by-page, retaining source filename and page numbers.
-    Returns:
-        (pages_data, doc_summary)
-    Ensures empty pages and scanned PDFs do not cause failure.
+    Extracts text page-by-page from in-memory PDF bytes without saving to disk.
+    Ensures Streamlit Cloud ephemeral persistence requirement is respected.
     """
-    filename = os.path.basename(file_path)
     pages_data = []
     summary = {
         "source": filename,
-        "file_path": os.path.abspath(file_path),
+        "file_path": f"memory://{filename}",
         "total_pages": 0,
         "total_chars": 0,
         "is_scanned": False,
@@ -58,12 +56,13 @@ def load_pdf_with_metadata(file_path: str) -> Tuple[List[Dict[str, Any]], Dict[s
         "error": None
     }
 
-    if not os.path.exists(file_path):
-        summary["error"] = f"File not found: {file_path}"
+    if not file_bytes:
+        summary["error"] = "Uploaded file buffer is empty."
         return pages_data, summary
 
     try:
-        reader = PdfReader(file_path)
+        stream = io.BytesIO(file_bytes)
+        reader = PdfReader(stream)
         summary["total_pages"] = len(reader.pages)
 
         if reader.is_encrypted:
@@ -86,16 +85,15 @@ def load_pdf_with_metadata(file_path: str) -> Tuple[List[Dict[str, Any]], Dict[s
 
             pages_data.append({
                 "source": filename,
-                "file_path": os.path.abspath(file_path),
+                "file_path": f"memory://{filename}",
                 "page": page_idx + 1,
                 "text": clean_text
             })
 
         summary["total_chars"] = total_extracted_chars
-        # If document has pages but zero extracted text, it is likely a scanned image PDF
         if summary["total_pages"] > 0 and total_extracted_chars == 0:
             summary["is_scanned"] = True
-            summary["warning"] = "Document contains no extractable text. It may be a scanned or image-based PDF requiring OCR."
+            summary["warning"] = "Document contains no extractable text. Scanned or image-based PDFs require OCR."
 
     except PdfReadError as pre:
         summary["error"] = f"Invalid or corrupted PDF file: {pre}"
@@ -105,11 +103,45 @@ def load_pdf_with_metadata(file_path: str) -> Tuple[List[Dict[str, Any]], Dict[s
     return pages_data, summary
 
 
+def load_pdf_with_metadata(file_path: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Extracts text page-by-page from a file path, retaining source filename and page numbers.
+    """
+    filename = os.path.basename(file_path)
+    if not os.path.exists(file_path):
+        return [], {
+            "source": filename,
+            "file_path": os.path.abspath(file_path),
+            "total_pages": 0,
+            "total_chars": 0,
+            "is_scanned": False,
+            "is_encrypted": False,
+            "error": f"File not found: {file_path}"
+        }
+
+    try:
+        with open(file_path, "rb") as f:
+            content = f.read()
+        pages, summary = load_pdf_from_bytes(content, filename)
+        summary["file_path"] = os.path.abspath(file_path)
+        for p in pages:
+            p["file_path"] = os.path.abspath(file_path)
+        return pages, summary
+    except Exception as e:
+        return [], {
+            "source": filename,
+            "file_path": os.path.abspath(file_path),
+            "total_pages": 0,
+            "total_chars": 0,
+            "is_scanned": False,
+            "is_encrypted": False,
+            "error": f"Failed to read file: {e}"
+        }
+
+
 def load_documents_from_directory(dir_path: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Scans a directory for all .pdf files and extracts page data.
-    Returns:
-        (all_pages, doc_summaries)
     Skips unreadable files without failing the entire batch.
     """
     all_pages = []

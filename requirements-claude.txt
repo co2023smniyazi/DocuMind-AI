@@ -1,0 +1,5 @@
+# Optional Claude Multi-Cloud Adapters (OFF by default, Rs 0 Budget)
+# Required ONLY if user enables Claude and supplies their own paid credentials.
+anthropic>=0.18.0
+boto3>=1.34.0
+google-cloud-aiplatform>=1.40.0

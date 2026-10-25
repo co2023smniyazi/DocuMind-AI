@@ -28,4 +28,7 @@ Thumbs.db
 # Temporary / Scratch files
 scratch/
 *.log
+fastembed_cache/
+chroma_db/
+
 

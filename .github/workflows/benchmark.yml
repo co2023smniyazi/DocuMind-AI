@@ -1,0 +1,56 @@
+name: Automated Performance Benchmark
+
+# Runs synthetic ingestion and latency percentile benchmarking on GitHub Actions Runner
+# Free Tier Citation: https://docs.github.com/en/billing/managing-billing-for-github-actions/about-billing-for-github-actions
+
+on:
+  workflow_dispatch:
+    inputs:
+      vector_store:
+        description: 'Vector store backend (chroma for local runner storage, qdrant for cloud cluster)'
+        required: true
+        default: 'chroma'
+      sizes:
+        description: 'Corpus sizes (chunks)'
+        required: false
+        default: '250 500 1000'
+      queries:
+        description: 'Number of queries per size'
+        required: false
+        default: '30'
+
+jobs:
+  benchmark:
+    name: Run Ingestion Throughput & Latency Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install numpy
+
+      - name: Run Performance Benchmark
+        env:
+          QDRANT_URL: ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+        run: |
+          python scripts/benchmark.py \
+            --sizes ${{ github.event.inputs.sizes || '250 500 1000' }} \
+            --queries ${{ github.event.inputs.queries || '30' }} \
+            --vector-store ${{ github.event.inputs.vector_store || 'chroma' }} | tee benchmark_output.log
+
+      - name: Upload Benchmark Log
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-output-log
+          path: benchmark_output.log

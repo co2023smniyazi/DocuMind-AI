@@ -1,31 +1,70 @@
-name: DocuMind AI CI Test Suite
+name: DocuMind-AI CI & Secret Verification Suite
+
+# GitHub Actions Free Tier: Unlimited minutes for public repositories; 2,000 minutes/month for private repos.
+# Reference: https://docs.github.com/en/billing/managing-billing-for-github-actions/about-billing-for-github-actions (Checked 2026-10-25)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, free-cloud-deploy, cloud-scalable-rag ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, free-cloud-deploy, cloud-scalable-rag ]
 
 jobs:
-  test:
+  secret-scan:
+    name: Secret & Credential Leak Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify No Committed Secrets File
+        run: |
+          if [ -f ".streamlit/secrets.toml" ]; then
+            echo "ERROR: .streamlit/secrets.toml is tracked in git! Committing actual secrets is strictly prohibited."
+            exit 1
+          fi
+          echo ".streamlit/secrets.toml is not committed. OK."
+
+      - name: Scan Repository for High-Entropy Keys & Tokens
+        run: |
+          echo "Scanning codebase for hardcoded API keys and tokens..."
+          # Regex matches common AI key patterns: AIzaSy (Google), sk-ant- (Anthropic), gsk_ (Groq)
+          SUSPICIOUS=$(git grep -E -I "AIzaSy[0-9A-Za-z_-]{33}|sk-ant-[0-9A-Za-z_-]{40,}|gsk_[0-9A-Za-z]{30,}" -- ':!.github' ':!*.example' ':!docs/*' || true)
+          if [ -n "$SUSPICIOUS" ]; then
+            echo "SECURITY VIOLATION: Potential live secret detected in codebase:"
+            echo "$SUSPICIOUS"
+            exit 1
+          fi
+          echo "Secret scan passed. Zero live API keys detected in tracked source files."
+
+  unit-tests:
+    name: Offline Unit & Integration Tests
+    needs: secret-scan
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-        cache: "pip"
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
 
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install Production & Test Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-claude.txt
+          pip install pytest
 
-    - name: Run Offline Unit Tests
-      run: |
-        python -m pytest tests/test_loader.py tests/test_chunker.py tests/test_mocked_rag.py -v
-
+      - name: Run Full Offline Unit Test Suite
+        env:
+          ENABLE_CLAUDE: "false"
+          LLM_PROVIDER: "mock"
+          EMBED_PROVIDER: "test"
+        run: |
+          python -m pytest tests/test_loader.py tests/test_chunker.py tests/test_mocked_rag.py tests/test_claude.py tests/test_cloud_rag.py -v

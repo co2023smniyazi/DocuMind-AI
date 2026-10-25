@@ -1,0 +1,67 @@
+name: On-Demand RAG Evaluation
+
+# Triggers full 50-question evaluation run via GitHub Actions
+# Uses GitHub Actions Secrets (GEMINI_API_KEY, QDRANT_URL, QDRANT_API_KEY)
+# Never touches or overwrites historical evaluation_results.csv or evaluation_report.md
+# Free Tier Citation: https://docs.github.com/en/billing/managing-billing-for-github-actions/about-billing-for-github-actions
+
+on:
+  workflow_dispatch:
+    inputs:
+      sample_size:
+        description: 'Number of questions to evaluate (leave empty for all 50)'
+        required: false
+        default: '50'
+      llm_provider:
+        description: 'LLM Provider (gemini, groq, mock)'
+        required: true
+        default: 'gemini'
+      embed_provider:
+        description: 'Embedding Provider (fastembed, test)'
+        required: true
+        default: 'fastembed'
+      vector_store:
+        description: 'Vector Store (chroma, qdrant)'
+        required: true
+        default: 'chroma'
+
+jobs:
+  evaluate:
+    name: Run Automated Benchmark Evaluation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pandas
+
+      - name: Execute Non-Destructive Benchmark
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          QDRANT_URL: ${{ secrets.QDRANT_URL }}
+          QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+          ENABLE_CLAUDE: "false"
+        run: |
+          python evaluate.py \
+            --sample ${{ github.event.inputs.sample_size }} \
+            --llm-provider ${{ github.event.inputs.llm_provider }} \
+            --embed-provider ${{ github.event.inputs.embed_provider }} \
+            --vector-store ${{ github.event.inputs.vector_store }} \
+            --output-dir evaluation
+
+      - name: Upload Benchmark Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-results
+          path: evaluation/

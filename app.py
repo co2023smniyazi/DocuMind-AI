@@ -1,5 +1,5 @@
 """
-Streamlit User Interface (Cloud-Ready & Claude AI Integrated)
+Streamlit User Interface (Cloud-Ready, Free-Tier Native & Claude AI Compatible)
 Local & Cloud LLM-Based College Document Question Answering Assistant Using RAG
 Project Management and Tracking Using Jira
 """
@@ -10,7 +10,22 @@ import streamlit as st
 import pandas as pd
 from rag_service import RAGService
 from document_loader import load_pdf_with_metadata
-from llm_service import ClaudeLLMService, OllamaLLMService, MockLLMService
+from vector_store import (
+    BaseVectorStore,
+    QdrantCloudVectorStore,
+    get_vector_store,
+    validate_and_sanitize_qdrant_url,
+    sanitize_qdrant_api_key,
+    sanitize_secret_text,
+)
+from llm_service import (
+    ClaudeLLMService,
+    OllamaLLMService,
+    GeminiLLMService,
+    GroqLLMService,
+    MockLLMService,
+    get_secret,
+)
 
 # Configure page layout and style
 st.set_page_config(
@@ -65,33 +80,66 @@ st.markdown("""
 
 # Initialize session state for runtime provider selection
 if "llm_provider" not in st.session_state:
-    st.session_state["llm_provider"] = os.environ.get("LLM_PROVIDER", "claude")
-if "user_anthropic_key" not in st.session_state:
-    st.session_state["user_anthropic_key"] = ""
-if "claude_model" not in st.session_state:
-    st.session_state["claude_model"] = os.environ.get("CLAUDE_MODEL", "claude-3-5-haiku-20241022")
+    st.session_state["llm_provider"] = get_secret("LLM_PROVIDER", "gemini").lower()
 
 
-def get_configured_rag():
-    # If user provided a key in the UI session, pass it to the service
-    provider = st.session_state["llm_provider"]
-    api_key = st.session_state["user_anthropic_key"] or os.environ.get("ANTHROPIC_API_KEY")
+# Production Cloud Persistence Enforcement Guard
+_v_prov = (get_secret("VECTOR_PROVIDER") or get_secret("VECTOR_STORE_PROVIDER") or "").lower()
+_is_cloud = bool(
+    os.environ.get("STREAMLIT_SHARING_HOST")
+    or os.environ.get("STREAMLIT_SERVER_PORT")
+    or get_secret("IS_STREAMLIT_CLOUD") == "true"
+)
 
+if _v_prov == "qdrant" or (_is_cloud and _v_prov not in ["chroma", "memory"]):
+    _q_url = get_secret("QDRANT_URL")
+    _q_key = get_secret("QDRANT_API_KEY")
+    if not _q_url or not _q_key:
+        st.error(
+            "🛑 **Blocking Configuration Error: Missing Qdrant Cloud Credentials**\n\n"
+            "The application is running in production cloud mode requiring persistent vector storage, "
+            "but `QDRANT_URL` or `QDRANT_API_KEY` is not configured in Streamlit Secrets.\n\n"
+            "**Why this is blocked:** Streamlit Community Cloud containers are ephemeral and hibernate after 12 hours. "
+            "Without persistent Qdrant Cloud storage, indexed vectors would be lost on container restart.\n\n"
+            "**Action Required:**\n"
+            "1. In **share.streamlit.io** -> App Settings -> **Secrets**, configure:\n"
+            "```toml\n"
+            "VECTOR_PROVIDER = \"qdrant\"\n"
+            "QDRANT_URL = \"https://your-cluster-id.region.aws.cloud.qdrant.io\"\n"
+            "QDRANT_API_KEY = \"your-qdrant-api-key\"\n"
+            "```\n"
+            "*(For local offline development, set `VECTOR_PROVIDER = 'chroma'`)*"
+        )
+        st.stop()
+    else:
+        try:
+            validate_and_sanitize_qdrant_url(_q_url)
+            sanitize_qdrant_api_key(_q_key)
+        except ValueError as val_err:
+            st.error(
+                f"🛑 **Blocking Configuration Error: Invalid Qdrant Cloud Format**\n\n"
+                f"**Details:** {val_err}\n\n"
+                "**Action Required in Streamlit Secrets:**\n"
+                "- Ensure `QDRANT_URL` is a plain HTTPS endpoint (e.g., `https://bc55f8d5-....cloud.qdrant.io`), not a Markdown link.\n"
+                "- Ensure `QDRANT_API_KEY` is pasted on a single line without quotes, whitespace, or newlines."
+            )
+            st.stop()
+
+
+@st.cache_resource(show_spinner=False)
+def get_cached_rag(provider: str):
     rag = RAGService(llm_provider=provider)
-    if provider == "claude" and isinstance(rag.llm_service, ClaudeLLMService):
-        if api_key:
-            rag.llm_service.api_key = api_key
-        rag.llm_service.model_name = st.session_state["claude_model"]
-
-    # Verify vector store population
     stats = rag.get_stats()
-    if stats["total_chunks"] == 0 and os.path.exists("./data"):
-        rag.index_directory("./data")
-
+    if not stats.get("error") and stats.get("total_chunks", 0) == 0 and os.path.exists("./data"):
+        try:
+            rag.index_directory("./data")
+        except Exception as e:
+            print(f"Warning during directory indexing: {e}")
     return rag
 
 
-rag_service = get_configured_rag()
+
+rag_service = get_cached_rag(st.session_state["llm_provider"])
 health = rag_service.check_health()
 stats = rag_service.get_stats()
 
@@ -102,35 +150,46 @@ with st.sidebar:
     st.title("Cloud Settings")
 
     st.markdown("### 🤖 LLM Provider Selection")
-    provider_options = ["Anthropic Claude (Cloud)", "Ollama (Local Fallback)", "Mock (Testing / Offline)"]
-    current_idx = 0 if st.session_state["llm_provider"] == "claude" else (1 if st.session_state["llm_provider"] == "ollama" else 2)
-    selected_provider_label = st.selectbox("Active Provider:", provider_options, index=current_idx)
 
-    new_provider = "claude" if "Claude" in selected_provider_label else ("ollama" if "Ollama" in selected_provider_label else "mock")
+    # Claude is only available when explicitly enabled via secrets AND key is set
+    claude_allowed = get_secret("ENABLE_CLAUDE", "false").lower() == "true" and bool(get_secret("ANTHROPIC_API_KEY"))
+
+    provider_map = {
+        "Google Gemini (Free Cloud)": "gemini",
+        "Groq Cloud (Free Fast)": "groq",
+        "Mock (Testing / Offline)": "mock",
+        "Local Ollama (Local Daemon Only)": "ollama",
+    }
+    if claude_allowed:
+        provider_map["Anthropic Claude (Cloud)"] = "claude"
+
+    provider_labels = list(provider_map.keys())
+    current_label = next((k for k, v in provider_map.items() if v == st.session_state["llm_provider"]), provider_labels[0])
+    selected_provider_label = st.selectbox("Active Provider:", provider_labels, index=provider_labels.index(current_label))
+
+    new_provider = provider_map[selected_provider_label]
     if new_provider != st.session_state["llm_provider"]:
         st.session_state["llm_provider"] = new_provider
         st.rerun()
 
-    if st.session_state["llm_provider"] == "claude":
-        st.markdown("**Claude Model:**")
-        model_options = [
-            "claude-3-5-haiku-20241022",
-            "claude-3-5-sonnet-20241022",
-            "claude-3-haiku-20240307"
-        ]
-        chosen_model = st.selectbox("Select Model:", model_options, index=0)
-        st.session_state["claude_model"] = chosen_model
-
-        # Check API key from env/secrets
-        env_has_key = bool(os.environ.get("ANTHROPIC_API_KEY") or (hasattr(st, "secrets") and "ANTHROPIC_API_KEY" in st.secrets))
-        if not env_has_key:
-            st.caption("🔑 Enter Anthropic API Key (Session only):")
-            input_key = st.text_input("API Key:", type="password", value=st.session_state["user_anthropic_key"])
-            if input_key != st.session_state["user_anthropic_key"]:
-                st.session_state["user_anthropic_key"] = input_key
-                st.rerun()
-        else:
-            st.caption("✅ `ANTHROPIC_API_KEY` detected from Cloud Secrets.")
+    # Provider specific information / status
+    if new_provider == "gemini":
+        gemini_model = get_secret("GEMINI_MODEL", "gemini-2.0-flash")
+        st.caption(f"**Model:** `{gemini_model}` (Google AI Studio Free Tier)")
+        if not get_secret("GEMINI_API_KEY"):
+            st.warning("⚠️ `GEMINI_API_KEY` not detected in Secrets/Env. Free key at [Google AI Studio](https://aistudio.google.com/)")
+    elif new_provider == "groq":
+        groq_model = get_secret("GROQ_MODEL", "llama-3.3-70b-versatile")
+        st.caption(f"**Model:** `{groq_model}` (Groq Cloud Free Tier)")
+        if not get_secret("GROQ_API_KEY"):
+            st.warning("⚠️ `GROQ_API_KEY` not detected in Secrets/Env. Free key at [Groq Console](https://console.groq.com/)")
+    elif new_provider == "claude":
+        claude_model = get_secret("CLAUDE_MODEL", "claude-3-5-haiku-20241022")
+        st.caption(f"**Model:** `{claude_model}` (Anthropic Claude)")
+    elif new_provider == "ollama":
+        st.caption("🖥️ **Local Ollama Daemon:** Requires local Ollama running on `localhost:11434` (Incompatible with cloud hosting)")
+    elif new_provider == "mock":
+        st.caption("🧪 **Deterministic Mock LLM:** Offline testing with zero network latency or costs")
 
     st.divider()
 
@@ -138,16 +197,16 @@ with st.sidebar:
     if health["llm_online"]:
         st.success(f"🟢 {health['llm_service']} Online")
     else:
-        st.warning(f"🟡 {health['llm_service']} Needs Configuration")
+        st.warning(f"🟡 {health['llm_service']} Offline / Needs Key")
 
     st.caption(f"**Embedding:** `{health['embedding_service']}`")
     st.caption(f"**Vector Store:** `{health['vector_store_provider']}`")
-    st.caption(f"**Indexed Chunks:** `{stats['total_chunks']}` across `{len(stats['unique_documents'])}` docs")
+    st.caption(f"**Indexed Chunks:** `{stats['total_chunks']}` across `{len(stats.get('unique_documents', []))}` docs")
 
     st.divider()
 
     st.markdown("### 📚 Indexed Documents")
-    if stats["unique_documents"]:
+    if stats.get("unique_documents"):
         for doc in stats["unique_documents"]:
             st.markdown(f"📄 `{doc}`")
     else:
@@ -170,14 +229,13 @@ with st.sidebar:
     st.divider()
 
     st.markdown("### 📤 Ingest New PDF")
-    uploaded_file = st.file_uploader("Upload a College PDF", type=["pdf"])
+    st.caption("ℹ️ *Uploads are processed in-memory. Extracted chunks are stored in vector database payloads; raw PDFs are not saved to disk.*")
+    uploaded_file = st.file_uploader("Upload a College PDF", type=["pdf"], key="pdf_uploader")
     if uploaded_file is not None:
-        save_path = os.path.join("./data", uploaded_file.name)
-        if not os.path.exists(save_path):
-            with open(save_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            with st.spinner(f"Processing {uploaded_file.name}..."):
-                res = rag_service.index_pdf(save_path)
+        if st.button("📥 Index Uploaded PDF", use_container_width=True):
+            with st.spinner(f"Processing {uploaded_file.name} in memory..."):
+                file_bytes = uploaded_file.getvalue()
+                res = rag_service.index_pdf_bytes(file_bytes, uploaded_file.name)
                 if res.get("status") == "success":
                     st.success(f"Added {uploaded_file.name} ({res.get('indexed_chunks', 0)} chunks)")
                     st.rerun()
@@ -192,7 +250,7 @@ with st.sidebar:
 
 # ----------------- MAIN CONTENT -----------------
 st.markdown('<div class="main-header">🎓 College Document Q&A Assistant</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Cloud-Native Retrieval-Augmented Generation (RAG) powered by <b>Anthropic Claude</b> & ChromaDB / Qdrant | Tracked via Jira Scrum</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Cloud-Native Retrieval-Augmented Generation (RAG) powered by <b>Google Gemini / FastEmbed</b> & Qdrant / ChromaDB | Tracked via Jira Scrum</div>', unsafe_allow_html=True)
 
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -206,6 +264,12 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # ----------------- TAB 1: ASK ASSISTANT -----------------
 with tab1:
     st.markdown("#### Ask questions about college regulations, exams, placement, or campus conduct:")
+
+    if stats.get("error"):
+        st.warning(
+            f"⚠️ **Vector Database Warning:** {stats.get('error')}\n\n"
+            "*(Answers may be unavailable until Qdrant Cloud connectivity is restored.)*"
+        )
 
     # Quick test question presets
     presets = [
@@ -243,8 +307,12 @@ with tab1:
         st.markdown("### 📝 Answer")
         if result.get("is_error"):
             st.error(f"❌ {result['answer']}")
-            if "Anthropic API key is not configured" in result["answer"]:
-                st.info("💡 **Setup Instructions:** Configure `ANTHROPIC_API_KEY` in Streamlit Cloud Secrets (share.streamlit.io), enter it in the sidebar, or switch to the Local/Mock provider.")
+            if "Google Gemini API key not configured" in result["answer"]:
+                st.info("💡 **Setup Instructions:** Configure `GEMINI_API_KEY` in Streamlit Cloud Secrets (share.streamlit.io). Obtain a free tier key at [Google AI Studio](https://aistudio.google.com/).")
+            elif "Anthropic API key is not configured" in result["answer"]:
+                st.info("💡 **Setup Instructions:** Configure `ANTHROPIC_API_KEY` and set `ENABLE_CLAUDE=true` in Streamlit Cloud Secrets.")
+            elif "Groq API key not configured" in result["answer"]:
+                st.info("💡 **Setup Instructions:** Configure `GROQ_API_KEY` in Streamlit Cloud Secrets. Obtain a free key at [Groq Console](https://console.groq.com/).")
         elif result["is_refusal"]:
             st.warning(f"⚠️ **{result['answer']}**")
             st.caption("ℹ️ The requested information was not found in the indexed college documents. The system adheres to strict zero-hallucination policies.")
@@ -269,7 +337,7 @@ with tab1:
 # ----------------- TAB 2: CLOUD ARCHITECTURE & DIAGNOSTICS -----------------
 with tab2:
     st.markdown("### ☁️ Cloud Platforms & Service Integrations")
-    st.markdown("Status and configuration of the 6 integrated cloud components:")
+    st.markdown("Status and configuration of the integrated cloud components:")
 
     col_c1, col_c2, col_c3 = st.columns(3)
     with col_c1:
@@ -278,42 +346,52 @@ with tab2:
             <h4>🌐 Hosting Platform</h4>
             <p><b>Platform:</b> Streamlit Community Cloud</p>
             <p><b>Status:</b> 🟢 Ready for Deploy</p>
-            <p><b>Tier:</b> 100% Free Forever</p>
-            <p><b>URL:</b> Public Cloud Webhook</p>
+            <p><b>Resource Limit:</b> 1 GB RAM / App</p>
+            <p><b>Lifecycle:</b> Sleeps on inactivity</p>
         </div>
         """, unsafe_allow_html=True)
 
     with col_c2:
-        claude_stat = "🟢 Connected" if health["llm_online"] else "🟡 Awaiting API Key"
+        llm_stat = "🟢 Connected" if health["llm_online"] else "🟡 Awaiting API Key"
         st.markdown(f"""
         <div class="status-card">
             <h4>🧠 Cloud LLM</h4>
-            <p><b>Provider:</b> Anthropic Claude</p>
-            <p><b>Status:</b> {claude_stat}</p>
+            <p><b>Provider:</b> {health['llm_service']}</p>
+            <p><b>Status:</b> {llm_stat}</p>
             <p><b>Model:</b> {health['llm_model']}</p>
             <p><b>Auth:</b> Streamlit Secrets / Env</p>
         </div>
         """, unsafe_allow_html=True)
 
     with col_c3:
+        vdb_err = stats.get("error")
+        vdb_status = "🔴 Error / Unreachable" if vdb_err else "🟢 Operational"
         st.markdown(f"""
         <div class="status-card">
             <h4>🗄️ Vector Database</h4>
             <p><b>Provider:</b> {stats.get('provider')}</p>
-            <p><b>Status:</b> 🟢 Persistent</p>
-            <p><b>Storage:</b> Git-Backed Persistent</p>
-            <p><b>Chunks:</b> {stats['total_chunks']} Indexed</p>
+            <p><b>Status:</b> {vdb_status}</p>
+            <p><b>Storage:</b> Payloads & Embeddings</p>
+            <p><b>Chunks:</b> {stats.get('total_chunks', 0)} Indexed</p>
         </div>
         """, unsafe_allow_html=True)
+        if vdb_err:
+            st.error(f"⚠️ **Vector Database Warning:** {vdb_err}")
 
     st.markdown("#### 📋 Integration Matrix")
     integration_matrix = [
-        {"Platform": "A. Streamlit Cloud", "Role": "Production Web Hosting", "Status": "Configured & Deployable", "Cost": "₹0 (Free Forever)", "Notes": "Auto-deploys from GitHub repository on git push"},
-        {"Platform": "B. Anthropic Claude", "Role": "Cloud LLM Answer Synthesis", "Status": "Integrated via Python SDK", "Cost": "Pay-as-you-go API", "Notes": "Configured with strict anti-hallucination prompt"},
-        {"Platform": "C. Cloud Vector Store", "Role": "Semantic Index Persistence", "Status": "ChromaDB Persistent / Qdrant", "Cost": "₹0 (Free Tier)", "Notes": "Repository-backed files persist across restarts"},
-        {"Platform": "D. Cloud Document Storage", "Role": "PDF Persistence", "Status": "GitHub Repo & Session State", "Cost": "₹0 (Free)", "Notes": "Pre-indexed college documents stored in repo"},
-        {"Platform": "E. GitHub", "Role": "Source Control & CI/CD", "Status": "Repository Connected", "Cost": "₹0 (Free)", "Notes": "Remote: co2023smniyazi/DocuMind-AI"},
-        {"Platform": "F. Jira Cloud", "Role": "Agile Scrum Management", "Status": "Backlog CSV & Guide Ready", "Cost": "₹0 (Free Tier)", "Notes": "Project Key: RAG, 6 Epics, 4 Sprints, 22 Items"}
+        {"Platform": "A. Streamlit Community Cloud", "Role": "Production Web Hosting", "Status": "Configured & Deployable", "Cost": "₹0 (Community Plan)", "Limits & Terms": "1 GB RAM limit, sleeps after consecutive days of inactivity"},
+        {"Platform": "B. Google Gemini API", "Role": "Cloud LLM (Default Provider)", "Status": "Integrated via google-genai SDK", "Cost": "₹0 (Free Tier)", "Limits & Terms": "15 RPM, 1M TPM, 1,500 RPD for Gemini 2.0 Flash; free tier data may be logged"},
+        {"Platform": "C. Groq Cloud", "Role": "Secondary Cloud LLM", "Status": "Integrated via groq SDK", "Cost": "₹0 (Free Tier)", "Limits & Terms": "30 RPM, 6k-30k TPM depending on model"},
+        {"Platform": "D. FastEmbed (ONNX)", "Role": "Semantic Vector Embeddings", "Status": "Integrated via fastembed", "Cost": "₹0 (In-container)", "Limits & Terms": "BAAI/bge-small-en-v1.5 (384-dim, 67MB ONNX, zero API calls)"},
+        {"Platform": "E. Qdrant Cloud", "Role": "Semantic Vector Storage", "Status": "Integrated via qdrant-client", "Cost": "₹0 (Free Tier)", "Limits & Terms": "1 GB free cluster, no credit card required, suspends after 7 days inactivity"},
+        {"Platform": "F. ChromaDB", "Role": "Local Vector Storage", "Status": "Active for Local Dev", "Cost": "₹0 (Local)", "Limits & Terms": "File-based storage in chroma_db/ for local testing & CI fallback"},
+        {"Platform": "G. GitHub", "Role": "Source Control & CI/CD", "Status": "Connected", "Cost": "₹0 (Free)", "Limits & Terms": "Public repo: co2023smniyazi/DocuMind-AI (branch: cloud-scalable-rag)"},
+        {"Platform": "H. Anthropic Claude (API)", "Role": "Optional Cloud LLM", "Status": "Mocked & Implemented (OFF by default)", "Cost": "Paid API (Requires Paid Key)", "Limits & Terms": "Requires ENABLE_CLAUDE=true and ANTHROPIC_API_KEY"},
+        {"Platform": "I. Amazon Bedrock (Claude)", "Role": "Multi-Cloud Adapter", "Status": "Mocked & Implemented (OFF by default)", "Cost": "Paid AWS (Requires AWS Key)", "Limits & Terms": "Requires ENABLE_CLAUDE=true and ENABLE_BEDROCK_CLAUDE=true"},
+        {"Platform": "J. Google Vertex AI (Claude)", "Role": "Multi-Cloud Adapter", "Status": "Mocked & Implemented (OFF by default)", "Cost": "Paid GCP (Requires GCP Project)", "Limits & Terms": "Requires ENABLE_CLAUDE=true and ENABLE_VERTEX_CLAUDE=true"},
+        {"Platform": "K. MCP Tool Server", "Role": "Agent Protocol Gateway", "Status": "Implemented & Mocked (Not Deployed)", "Cost": "₹0 (Standalone code)", "Limits & Terms": "Exposes search_documents and ask_documents via Bearer auth"},
+        {"Platform": "L. Jira Cloud", "Role": "Agile Scrum Management", "Status": "Backlog & Guide Ready", "Cost": "₹0 (Free Tier)", "Limits & Terms": "Free up to 10 users, 6 Epics, 4 Sprints, 25 Items"}
     ]
     st.dataframe(pd.DataFrame(integration_matrix), use_container_width=True)
 
@@ -324,87 +402,108 @@ with tab2:
     2. Click **App Settings > Secrets**.
     3. Add your secrets in TOML format:
     ```toml
-    ANTHROPIC_API_KEY = "sk-ant-api03-..."
-    CLAUDE_MODEL = "claude-3-5-haiku-20241022"
-    LLM_PROVIDER = "claude"
-    EMBEDDING_PROVIDER = "cloud"
+    # Primary Free Cloud LLM (Google Gemini)
+    GEMINI_API_KEY = "AIzaSy..."
+    GEMINI_MODEL = "gemini-2.0-flash"
+    LLM_PROVIDER = "gemini"
+
+    # Optional Free Secondary LLM (Groq)
+    GROQ_API_KEY = "gsk_..."
+    GROQ_MODEL = "llama-3.3-70b-versatile"
+
+    # Optional Qdrant Cloud Vector Store
+    QDRANT_URL = "https://your-cluster-id.region.gcp.cloud.qdrant.io:6333"
+    QDRANT_API_KEY = "your-qdrant-api-key"
+    VECTOR_STORE_PROVIDER = "qdrant"
+
+    # Optional Claude (OFF by default; budget rule: keep false unless approved)
+    ENABLE_CLAUDE = "false"
+    ANTHROPIC_API_KEY = "sk-ant-..."
     ```
     """)
 
 
 # ----------------- TAB 3: JIRA SCRUM PROJECT -----------------
 with tab3:
+    import json
     st.markdown("### 📋 Jira Project Tracking (Project Key: RAG)")
-    st.markdown("This project is managed and tracked according to the Scrum framework across 4 one-week sprints.")
+    st.markdown("Live agile project state loaded directly from `jira_management/status.json`:")
 
-    # Jira Metrics
+    status_file = "./jira_management/status.json"
+    jira_info = {}
+    if os.path.exists(status_file):
+        try:
+            with open(status_file, "r", encoding="utf-8") as f:
+                jira_info = json.load(f)
+        except Exception:
+            pass
+
+    # Dynamic Jira Metrics
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Project Name", "College RAG")
-    col2.metric("Project Key", "RAG")
-    col3.metric("Total Epics", "6 Epics")
-    col4.metric("Backlog Items", "22 Items")
-    col5.metric("Total Story Points", "90 SP")
+    col1.metric("Project Name", jira_info.get("project_name", "College RAG Assistant"))
+    col2.metric("Project Key", jira_info.get("project_key", "RAG"))
+    col3.metric("Total Epics", f"{len(jira_info.get('epics', []))} Epics")
+    col4.metric("Current Sprint", jira_info.get("current_sprint", "Sprint 4"))
+    col5.metric("Story Points", f"{jira_info.get('total_story_points', 90)} SP")
 
     st.markdown("#### 🚀 Jira Workflow State")
     st.code("TO DO  ➡️  IN PROGRESS  ➡️  CODE REVIEW  ➡️  TESTING  ➡️  DONE", language="text")
 
-    # Epics overview
-    epics_data = [
-        {"Epic ID": "EPIC-1", "Name": "Requirements and Dataset", "Status": "DONE", "Story Points": 11},
-        {"Epic ID": "EPIC-2", "Name": "LLM & Cloud Setup", "Status": "DONE", "Story Points": 10},
-        {"Epic ID": "EPIC-3", "Name": "RAG Pipeline & Claude AI", "Status": "DONE", "Story Points": 42},
-        {"Epic ID": "EPIC-4", "Name": "User Interface & Cloud Hosting", "Status": "DONE", "Story Points": 13},
-        {"Epic ID": "EPIC-5", "Name": "Testing and Evaluation", "Status": "DONE", "Story Points": 15},
-        {"Epic ID": "EPIC-6", "Name": "Documentation and Demonstration", "Status": "IN PROGRESS", "Story Points": 5},
-    ]
+    # Epics overview loaded dynamically from status.json (defaults to TO DO)
+    epics_data = jira_info.get("epics", [
+        {"epic_id": "EPIC-1", "name": "Document Ingestion & Extraction", "status": "TO DO", "story_points": 13},
+        {"epic_id": "EPIC-2", "name": "Semantic Chunking & Vector Indexing", "status": "TO DO", "story_points": 18},
+        {"epic_id": "EPIC-3", "name": "Cloud-Native Embedding & Vector Storage", "status": "TO DO", "story_points": 21},
+        {"epic_id": "EPIC-4", "name": "LLM Integration, Fallback & Grounded Generation", "status": "TO DO", "story_points": 21},
+        {"epic_id": "EPIC-5", "name": "Testing, Safe Refusal & Benchmark Evaluation", "status": "TO DO", "story_points": 18},
+        {"epic_id": "EPIC-6", "name": "Cloud Deployment, CI/CD & Security", "status": "TO DO", "story_points": 18},
+    ])
     st.dataframe(pd.DataFrame(epics_data), use_container_width=True)
 
-    st.markdown("#### 📅 Sprint Breakdown")
+    st.markdown("#### 📅 Sprint Breakdown (Tracked in `jira_management/jira_import.csv`)")
     sprint_tabs = st.tabs(["Sprint 1: Foundation", "Sprint 2: RAG Pipeline", "Sprint 3: Cloud & Claude", "Sprint 4: Evaluation & Demo"])
 
     with sprint_tabs[0]:
         st.markdown("""
-        - `RAG-1` Define functional requirements (Story - 3 SP) ✅ DONE
-        - `RAG-2` Collect college documents (Task - 3 SP) ✅ DONE
-        - `RAG-3` Prepare 50 sample questions (Task - 5 SP) ✅ DONE
-        - `RAG-4` Setup LLM environment (Task - 2 SP) ✅ DONE
-        - `RAG-5` Run and test baseline LLM (Task - 3 SP) ✅ DONE
+        - `RAG-1` Define functional requirements (Story - 3 SP) `[TO DO]`
+        - `RAG-2` Collect college documents (Task - 3 SP) `[TO DO]`
+        - `RAG-3` Prepare 50 sample questions (Task - 5 SP) `[TO DO]`
+        - `RAG-4` Setup LLM environment (Task - 2 SP) `[TO DO]`
+        - `RAG-5` Run and test baseline LLM (Task - 3 SP) `[TO DO]`
         """)
 
     with sprint_tabs[1]:
         st.markdown("""
-        - `RAG-6` Develop PDF text extractor (Story - 3 SP) ✅ DONE
-        - `RAG-7` Develop text chunking module (Story - 3 SP) ✅ DONE
-        - `RAG-8` Generate vector embeddings (Story - 5 SP) ✅ DONE
-        - `RAG-9` Create vector database (Story - 5 SP) ✅ DONE
-        - `RAG-10` Develop semantic retrieval (Story - 5 SP) ✅ DONE
+        - `RAG-6` Develop PDF text extractor (Story - 3 SP) `[TO DO]`
+        - `RAG-7` Develop text chunking module (Story - 3 SP) `[TO DO]`
+        - `RAG-8` Generate vector embeddings (Story - 5 SP) `[TO DO]`
+        - `RAG-9` Create vector database (Story - 5 SP) `[TO DO]`
+        - `RAG-10` Develop semantic retrieval (Story - 5 SP) `[TO DO]`
         """)
 
     with sprint_tabs[2]:
         st.markdown("""
-        - `RAG-11` Integrate retrieved context with LLM (Story - 5 SP) ✅ DONE
-        - `RAG-12` Develop RAG prompt with anti-hallucination (Story - 3 SP) ✅ DONE
-        - `RAG-13` Implement source citation (Story - 3 SP) ✅ DONE
-        - `RAG-14` Implement unknown-answer handling (Story - 3 SP) ✅ DONE
-        - `RAG-15` Create Streamlit UI (Story - 5 SP) ✅ DONE
-        - `RAG-16` Display retrieved sources (Story - 3 SP) ✅ DONE
-        - `RAG-21` Cloud deployment configuration for Streamlit Cloud (Story - 5 SP) ✅ DONE
-        - `RAG-22` Anthropic Claude API integration (Story - 5 SP) ✅ DONE
+        - `RAG-11` Integrate retrieved context with LLM (Story - 5 SP) `[TO DO]`
+        - `RAG-12` Implement hallucination prevention (Story - 5 SP) `[TO DO]`
+        - `RAG-13` Add source document citation (Story - 3 SP) `[TO DO]`
+        - `RAG-14` Integrate Google Gemini Cloud LLM (Story - 5 SP) `[TO DO]`
+        - `RAG-15` FastEmbed ONNX local embedder (Story - 5 SP) `[TO DO]`
         """)
 
     with sprint_tabs[3]:
         st.markdown("""
-        - `RAG-17` Perform functional testing (Task - 5 SP) ✅ DONE
-        - `RAG-18` Evaluate LLM responses across 50 questions (Task - 5 SP) ✅ DONE
-        - `RAG-19` Fix identified defects (Bug/Task - 5 SP) ✅ DONE
-        - `RAG-20` Prepare documentation and cloud demonstration (Task - 5 SP) 🔄 IN PROGRESS
+        - `RAG-16` Qdrant Cloud vector database integration (Story - 5 SP) `[TO DO]`
+        - `RAG-17` Run automated 50-question benchmark (Story - 5 SP) `[TO DO]`
+        - `RAG-18` Implement multi-metric evaluation (Story - 5 SP) `[TO DO]`
+        - `RAG-19` Setup Streamlit Cloud deployment (Story - 3 SP) `[TO DO]`
+        - `RAG-20` Cloud health check diagnostic page (Story - 3 SP) `[TO DO]`
         """)
 
 
 # ----------------- TAB 4: DOCUMENT KNOWLEDGE BASE -----------------
 with tab4:
     st.markdown("### 📑 College Document Knowledge Base")
-    st.markdown("Inspect all college documents currently indexed in ChromaDB:")
+    st.markdown("Inspect seed college documents bundled with the repository:")
 
     if os.path.exists("./data"):
         doc_files = [f for f in sorted(os.listdir("./data")) if f.endswith(".pdf")]
@@ -449,3 +548,4 @@ with tab5:
             st.markdown(f.read())
     else:
         st.info("Run `python evaluate.py` to generate the latest benchmark report.")
+
