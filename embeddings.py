@@ -217,7 +217,7 @@ def get_embedder(provider: Optional[str] = None) -> BaseEmbedder:
     Factory function for embedding services.
     Default: FastEmbedEmbedder (BAAI/bge-small-en-v1.5, 384-dim, no API key).
     """
-    selected = (provider or get_secret("EMBEDDING_PROVIDER", "fastembed")).lower()
+    selected = (provider or get_secret("EMBED_PROVIDER") or get_secret("EMBEDDING_PROVIDER") or "fastembed").lower()
 
     if selected == "fastembed" or selected == "cloud":
         return FastEmbedEmbedder()

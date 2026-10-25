@@ -77,9 +77,9 @@ def test_claude_service_mocked_refusal():
 
 
 def test_claude_service_mocked_rate_limit_error():
+    anthropic = pytest.importorskip("anthropic")
     service = ClaudeLLMService(api_key="sk-ant-test-key-mock", is_enabled=True)
 
-    import anthropic
     mock_client = MagicMock()
     # Create mock response object for RateLimitError
     fake_response = MagicMock()

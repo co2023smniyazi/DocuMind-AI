@@ -74,7 +74,7 @@ class QdrantCloudVectorStore(BaseVectorStore):
     ):
         self.url = url or get_secret("QDRANT_URL", "")
         self.api_key = api_key or get_secret("QDRANT_API_KEY", "")
-        self.collection_name = collection_name
+        self.collection_name = collection_name or get_secret("QDRANT_COLLECTION", "college_documents")
         self.embedding_dimension = embedding_dimension
         self._known_sources: set = set()
         self._client = None

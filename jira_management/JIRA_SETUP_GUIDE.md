@@ -98,3 +98,4 @@ stateDiagram-v2
 [SCREENSHOT 3: Jira Sprint Burndown Chart]
 (Path: docs/screenshots/jira_burndown_chart.png)
 ```
+
