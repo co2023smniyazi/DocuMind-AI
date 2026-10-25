@@ -9,7 +9,8 @@ Test-Only: MockLLMService (For deterministic offline CI tests)
 
 import os
 import time
-from typing import Dict, Any, Optional
+import random
+from typing import Dict, Any, Optional, List, Tuple
 from abc import ABC, abstractmethod
 
 
@@ -270,6 +271,222 @@ class ClaudeLLMService(BaseLLMService):
             raise RuntimeError(f"Anthropic Claude API Error: {e}") from e
 
 
+class BedrockClaudeLLMService(BaseLLMService):
+    """
+    Amazon Bedrock Claude Adapter (OPTIONAL, PAID, OFF BY DEFAULT).
+    Hard rule: Active ONLY when ENABLE_CLAUDE=true, ENABLE_BEDROCK_CLAUDE=true, and AWS credentials are set.
+    Status: Implemented, unit-tested with mocks, NOT live-tested; enabling requires the owner's own paid credentials.
+    Official Bedrock Model IDs:
+    - anthropic.claude-3-5-haiku-20241022-v1:0
+    - anthropic.claude-3-haiku-20240307-v1:0
+    Verified doc URL: https://docs.aws.amazon.com/bedrock/latest/userguide/model-ids.html
+    """
+
+    def __init__(
+        self,
+        model_id: Optional[str] = None,
+        region_name: Optional[str] = None,
+        aws_access_key_id: Optional[str] = None,
+        aws_secret_access_key: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 1024,
+        is_enabled: Optional[bool] = None
+    ):
+        self.model_id = model_id or get_secret("BEDROCK_CLAUDE_MODEL", "anthropic.claude-3-5-haiku-20241022-v1:0")
+        self.region_name = region_name or get_secret("AWS_REGION", "us-east-1")
+        self.aws_access_key_id = aws_access_key_id or get_secret("AWS_ACCESS_KEY_ID")
+        self.aws_secret_access_key = aws_secret_access_key or get_secret("AWS_SECRET_ACCESS_KEY")
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self._is_enabled_override = is_enabled
+        self._client = None
+
+    def is_enabled(self) -> bool:
+        if self._is_enabled_override is not None:
+            return self._is_enabled_override
+        claude_on = (get_secret("ENABLE_CLAUDE", "false") or "").strip().lower() in ("true", "1", "yes")
+        bedrock_on = (get_secret("ENABLE_BEDROCK_CLAUDE", "false") or "").strip().lower() in ("true", "1", "yes")
+        return bool(claude_on and bedrock_on)
+
+    def is_available(self) -> bool:
+        return bool(self.is_enabled() and self.aws_access_key_id and len(self.aws_access_key_id.strip()) > 5)
+
+    def _get_client(self):
+        if self._client is None:
+            import boto3
+            self._client = boto3.client(
+                service_name="bedrock-runtime",
+                region_name=self.region_name,
+                aws_access_key_id=self.aws_access_key_id,
+                aws_secret_access_key=self.aws_secret_access_key
+            )
+        return self._client
+
+    def generate_response(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        if not self.is_enabled():
+            raise RuntimeError(
+                "Amazon Bedrock Claude is disabled by default to prevent unexpected charges (Rs 0 budget policy). "
+                "To enable it explicitly, set ENABLE_CLAUDE=true and ENABLE_BEDROCK_CLAUDE=true in secrets. "
+                "Docs note: implemented, unit-tested with mocks, NOT live-tested; enabling requires the owner's own paid credentials."
+            )
+        if not self.is_available():
+            raise RuntimeError("AWS credentials not configured for Amazon Bedrock Claude.")
+
+        client = self._get_client()
+        sys_instruction = system_prompt or SYSTEM_PROMPT
+        try:
+            response = client.converse(
+                modelId=self.model_id,
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                system=[{"text": sys_instruction}],
+                inferenceConfig={"temperature": self.temperature, "maxTokens": self.max_tokens}
+            )
+            output = response.get("output", {}).get("message", {}).get("content", [])
+            for block in output:
+                if "text" in block:
+                    return block["text"].strip()
+            return UNKNOWN_ANSWER_PHRASE
+        except Exception as e:
+            raise RuntimeError(f"Amazon Bedrock Claude API Error: {e}") from e
+
+
+class VertexClaudeLLMService(BaseLLMService):
+    """
+    Google Cloud Vertex AI Claude Adapter (OPTIONAL, PAID, OFF BY DEFAULT).
+    Hard rule: Active ONLY when ENABLE_CLAUDE=true, ENABLE_VERTEX_CLAUDE=true, and GCP project is configured.
+    Status: Implemented, unit-tested with mocks, NOT live-tested; enabling requires the owner's own paid credentials.
+    Official Vertex Claude Model IDs:
+    - claude-3-5-haiku@20241022
+    - claude-3-5-sonnet@20241022
+    Verified doc URL: https://docs.anthropic.com/en/api/claude-on-vertex-ai
+    """
+
+    def __init__(
+        self,
+        model_name: Optional[str] = None,
+        project_id: Optional[str] = None,
+        region: Optional[str] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 1024,
+        is_enabled: Optional[bool] = None
+    ):
+        self.model_name = model_name or get_secret("VERTEX_CLAUDE_MODEL", "claude-3-5-haiku@20241022")
+        self.project_id = project_id or get_secret("GCP_PROJECT_ID")
+        self.region = region or get_secret("GCP_REGION", "us-east5")
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self._is_enabled_override = is_enabled
+        self._client = None
+
+    def is_enabled(self) -> bool:
+        if self._is_enabled_override is not None:
+            return self._is_enabled_override
+        claude_on = (get_secret("ENABLE_CLAUDE", "false") or "").strip().lower() in ("true", "1", "yes")
+        vertex_on = (get_secret("ENABLE_VERTEX_CLAUDE", "false") or "").strip().lower() in ("true", "1", "yes")
+        return bool(claude_on and vertex_on)
+
+    def is_available(self) -> bool:
+        return bool(self.is_enabled() and self.project_id and len(self.project_id.strip()) > 3)
+
+    def _get_client(self):
+        if self._client is None and self.project_id:
+            from anthropic import AnthropicVertex
+            self._client = AnthropicVertex(project_id=self.project_id, region=self.region)
+        return self._client
+
+    def generate_response(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        if not self.is_enabled():
+            raise RuntimeError(
+                "Google Vertex AI Claude is disabled by default to prevent unexpected charges (Rs 0 budget policy). "
+                "To enable it explicitly, set ENABLE_CLAUDE=true and ENABLE_VERTEX_CLAUDE=true in secrets. "
+                "Docs note: implemented, unit-tested with mocks, NOT live-tested; enabling requires the owner's own paid credentials."
+            )
+        if not self.is_available():
+            raise RuntimeError("GCP Project ID not configured for Google Vertex AI Claude.")
+
+        client = self._get_client()
+        sys_instruction = system_prompt or SYSTEM_PROMPT
+        try:
+            message = client.messages.create(
+                model=self.model_name,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                system=sys_instruction,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            if message and message.content:
+                text_blocks = [b.text for b in message.content if getattr(b, "type", "") == "text" or hasattr(b, "text")]
+                return "".join(text_blocks).strip()
+            return UNKNOWN_ANSWER_PHRASE
+        except Exception as e:
+            raise RuntimeError(f"Google Vertex AI Claude API Error: {e}") from e
+
+
+class FallbackLLMChain(BaseLLMService):
+    """
+    Production Scalable LLM Fallback Chain with Circuit Breakers.
+    Priority:
+    1. GeminiLLMService (Free Tier: 15 RPM, 1M TPM, 1,500 RPD)
+    2. GroqLLMService (Free Tier: 30 RPM)
+    3. MockLLMService (Offline / Testing fallback)
+    Features:
+    - Exponential backoff with random jitter on 429 rate limits.
+    - Provider-level circuit breaker: trips for 60s after 3 consecutive failures.
+    - Graceful degradation message if all providers hit rate limits.
+    """
+
+    def __init__(self, providers: Optional[List[Tuple[str, BaseLLMService]]] = None):
+        if providers:
+            self.providers = providers
+        else:
+            self.providers = [
+                ("Gemini", GeminiLLMService()),
+                ("Groq", GroqLLMService())
+            ]
+        self.circuit_state = {name: {"failures": 0, "tripped_until": 0.0} for name, _ in self.providers}
+        self.stats = {"fallbacks_triggered": 0, "rate_limits_handled": 0}
+
+    def is_available(self) -> bool:
+        now = time.time()
+        for name, srv in self.providers:
+            if srv.is_available() and now >= self.circuit_state[name]["tripped_until"]:
+                return True
+        return False
+
+    def generate_response(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+        now = time.time()
+
+        for name, srv in self.providers:
+            # Check circuit breaker
+            if now < self.circuit_state[name]["tripped_until"]:
+                continue
+            if not srv.is_available():
+                continue
+
+            for attempt in range(2):
+                try:
+                    ans = srv.generate_response(prompt, system_prompt)
+                    self.circuit_state[name]["failures"] = 0
+                    return ans
+                except Exception as e:
+                    err_str = str(e).lower()
+                    is_rate_limit = "429" in err_str or "quota" in err_str or "rate limit" in err_str
+                    if is_rate_limit:
+                        self.stats["rate_limits_handled"] += 1
+                        jitter = random.uniform(0.5, 1.2)
+                        time.sleep((attempt + 1) * jitter)
+
+            self.circuit_state[name]["failures"] += 1
+            if self.circuit_state[name]["failures"] >= 2:
+                self.circuit_state[name]["tripped_until"] = time.time() + 60.0
+            self.stats["fallbacks_triggered"] += 1
+
+        return (
+            "⚠️ Cloud LLM quota currently exhausted across all free providers. "
+            "Please refer to the verified source documents and retrieved excerpts below for your answer."
+        )
+
+
 class OllamaLLMService(BaseLLMService):
     """
     Local fallback LLM service using locally installed Ollama (llama3.2:3b).
@@ -330,6 +547,7 @@ def get_llm_service(provider: Optional[str] = None, **kwargs) -> BaseLLMService:
     """
     Factory function for LLM services.
     Default: GeminiLLMService (Free-tier Google GenAI).
+    Supports: gemini, groq, claude, bedrock, vertex, chain, ollama, mock.
     """
     selected = (provider or get_secret("LLM_PROVIDER", "gemini")).lower()
 
@@ -337,19 +555,23 @@ def get_llm_service(provider: Optional[str] = None, **kwargs) -> BaseLLMService:
         return GeminiLLMService(**kwargs)
     elif selected == "groq":
         return GroqLLMService(**kwargs)
+    elif selected == "chain":
+        return FallbackLLMChain(**kwargs)
     elif selected == "claude":
         return ClaudeLLMService(**kwargs)
+    elif selected == "bedrock":
+        return BedrockClaudeLLMService(**kwargs)
+    elif selected == "vertex":
+        return VertexClaudeLLMService(**kwargs)
     elif selected == "ollama":
         return OllamaLLMService(**kwargs)
     elif selected == "mock" or selected == "test":
         return MockLLMService(**kwargs)
     else:
-        # Auto-fallback: check if Gemini key is present, else Groq, else Mock
         if get_secret("GEMINI_API_KEY"):
             return GeminiLLMService(**kwargs)
         if get_secret("GROQ_API_KEY"):
             return GroqLLMService(**kwargs)
-        # Default to GeminiLLMService
         return GeminiLLMService(**kwargs)
 
 

@@ -75,19 +75,16 @@ if "llm_provider" not in st.session_state:
     st.session_state["llm_provider"] = get_secret("LLM_PROVIDER", "gemini").lower()
 
 
-def get_configured_rag():
-    provider = st.session_state["llm_provider"]
+@st.cache_resource(show_spinner=False)
+def get_cached_rag(provider: str):
     rag = RAGService(llm_provider=provider)
-
-    # Seed bundled sample PDFs if vector store is empty and data/ exists
     stats = rag.get_stats()
     if stats.get("total_chunks", 0) == 0 and os.path.exists("./data"):
         rag.index_directory("./data")
-
     return rag
 
 
-rag_service = get_configured_rag()
+rag_service = get_cached_rag(st.session_state["llm_provider"])
 health = rag_service.check_health()
 stats = rag_service.get_stats()
 
@@ -324,9 +321,12 @@ with tab2:
         {"Platform": "D. FastEmbed (ONNX)", "Role": "Semantic Vector Embeddings", "Status": "Integrated via fastembed", "Cost": "₹0 (In-container)", "Limits & Terms": "BAAI/bge-small-en-v1.5 (384-dim, 67MB ONNX, zero API calls)"},
         {"Platform": "E. Qdrant Cloud", "Role": "Semantic Vector Storage", "Status": "Integrated via qdrant-client", "Cost": "₹0 (Free Tier)", "Limits & Terms": "1 GB free cluster, no credit card required, suspends after 7 days inactivity"},
         {"Platform": "F. ChromaDB", "Role": "Local Vector Storage", "Status": "Active for Local Dev", "Cost": "₹0 (Local)", "Limits & Terms": "File-based storage in chroma_db/ for local testing & CI fallback"},
-        {"Platform": "G. GitHub", "Role": "Source Control & CI/CD", "Status": "Connected", "Cost": "₹0 (Free)", "Limits & Terms": "Public repo: co2023smniyazi/DocuMind-AI (branch: free-cloud-deploy)"},
-        {"Platform": "H. Anthropic Claude", "Role": "Optional Cloud LLM", "Status": "Configured (OFF by default)", "Cost": "Paid API (Requires Paid Key)", "Limits & Terms": "Requires ENABLE_CLAUDE=true and ANTHROPIC_API_KEY"},
-        {"Platform": "I. Jira Cloud", "Role": "Agile Scrum Management", "Status": "Backlog & Guide Ready", "Cost": "₹0 (Free Tier)", "Limits & Terms": "Free up to 10 users, 6 Epics, 4 Sprints, 22 Items"}
+        {"Platform": "G. GitHub", "Role": "Source Control & CI/CD", "Status": "Connected", "Cost": "₹0 (Free)", "Limits & Terms": "Public repo: co2023smniyazi/DocuMind-AI (branch: cloud-scalable-rag)"},
+        {"Platform": "H. Anthropic Claude (API)", "Role": "Optional Cloud LLM", "Status": "Mocked & Implemented (OFF by default)", "Cost": "Paid API (Requires Paid Key)", "Limits & Terms": "Requires ENABLE_CLAUDE=true and ANTHROPIC_API_KEY"},
+        {"Platform": "I. Amazon Bedrock (Claude)", "Role": "Multi-Cloud Adapter", "Status": "Mocked & Implemented (OFF by default)", "Cost": "Paid AWS (Requires AWS Key)", "Limits & Terms": "Requires ENABLE_CLAUDE=true and ENABLE_BEDROCK_CLAUDE=true"},
+        {"Platform": "J. Google Vertex AI (Claude)", "Role": "Multi-Cloud Adapter", "Status": "Mocked & Implemented (OFF by default)", "Cost": "Paid GCP (Requires GCP Project)", "Limits & Terms": "Requires ENABLE_CLAUDE=true and ENABLE_VERTEX_CLAUDE=true"},
+        {"Platform": "K. MCP Tool Server", "Role": "Agent Protocol Gateway", "Status": "Implemented & Mocked (Not Deployed)", "Cost": "₹0 (Standalone code)", "Limits & Terms": "Exposes search_documents and ask_documents via Bearer auth"},
+        {"Platform": "L. Jira Cloud", "Role": "Agile Scrum Management", "Status": "Backlog & Guide Ready", "Cost": "₹0 (Free Tier)", "Limits & Terms": "Free up to 10 users, 6 Epics, 4 Sprints, 25 Items"}
     ]
     st.dataframe(pd.DataFrame(integration_matrix), use_container_width=True)
 
@@ -360,29 +360,39 @@ with tab2:
 
 # ----------------- TAB 3: JIRA SCRUM PROJECT -----------------
 with tab3:
+    import json
     st.markdown("### 📋 Jira Project Tracking (Project Key: RAG)")
-    st.markdown("This project is managed and tracked according to the Scrum framework across 4 one-week sprints.")
+    st.markdown("Live agile project state loaded directly from `jira_management/status.json`:")
 
-    # Jira Metrics
+    status_file = "./jira_management/status.json"
+    jira_info = {}
+    if os.path.exists(status_file):
+        try:
+            with open(status_file, "r", encoding="utf-8") as f:
+                jira_info = json.load(f)
+        except Exception:
+            pass
+
+    # Dynamic Jira Metrics
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Project Name", "College RAG")
-    col2.metric("Project Key", "RAG")
-    col3.metric("Total Epics", "6 Epics")
-    col4.metric("Backlog Items", "22 Items")
-    col5.metric("Total Story Points", "90 SP")
+    col1.metric("Project Name", jira_info.get("project_name", "College RAG Assistant"))
+    col2.metric("Project Key", jira_info.get("project_key", "RAG"))
+    col3.metric("Total Epics", f"{len(jira_info.get('epics', []))} Epics")
+    col4.metric("Current Sprint", jira_info.get("current_sprint", "Sprint 4"))
+    col5.metric("Story Points", f"{jira_info.get('total_story_points', 90)} SP")
 
     st.markdown("#### 🚀 Jira Workflow State")
     st.code("TO DO  ➡️  IN PROGRESS  ➡️  CODE REVIEW  ➡️  TESTING  ➡️  DONE", language="text")
 
-    # Epics overview
-    epics_data = [
-        {"Epic ID": "EPIC-1", "Name": "Requirements and Dataset", "Status": "DONE", "Story Points": 11},
-        {"Epic ID": "EPIC-2", "Name": "LLM & Cloud Setup", "Status": "DONE", "Story Points": 10},
-        {"Epic ID": "EPIC-3", "Name": "RAG Pipeline & Claude AI", "Status": "DONE", "Story Points": 42},
-        {"Epic ID": "EPIC-4", "Name": "User Interface & Cloud Hosting", "Status": "DONE", "Story Points": 13},
-        {"Epic ID": "EPIC-5", "Name": "Testing and Evaluation", "Status": "DONE", "Story Points": 15},
-        {"Epic ID": "EPIC-6", "Name": "Documentation and Demonstration", "Status": "IN PROGRESS", "Story Points": 5},
-    ]
+    # Epics overview loaded dynamically
+    epics_data = jira_info.get("epics", [
+        {"epic_id": "EPIC-1", "name": "Requirements and Dataset", "status": "DONE", "story_points": 11},
+        {"epic_id": "EPIC-2", "name": "LLM & Cloud Setup", "status": "DONE", "story_points": 10},
+        {"epic_id": "EPIC-3", "name": "RAG Pipeline & Claude AI", "status": "DONE", "story_points": 42},
+        {"epic_id": "EPIC-4", "name": "User Interface & Cloud Hosting", "status": "IN PROGRESS", "story_points": 13},
+        {"epic_id": "EPIC-5", "name": "Testing and Evaluation", "status": "IN PROGRESS", "story_points": 15},
+        {"epic_id": "EPIC-6", "name": "Documentation and Demonstration", "status": "IN PROGRESS", "story_points": 5},
+    ])
     st.dataframe(pd.DataFrame(epics_data), use_container_width=True)
 
     st.markdown("#### 📅 Sprint Breakdown")
@@ -479,29 +489,39 @@ with tab5:
 
 # ----------------- TAB 3: JIRA SCRUM PROJECT -----------------
 with tab3:
+    import json
     st.markdown("### 📋 Jira Project Tracking (Project Key: RAG)")
-    st.markdown("This project is managed and tracked according to the Scrum framework across 4 one-week sprints.")
+    st.markdown("Live agile project state loaded directly from `jira_management/status.json`:")
 
-    # Jira Metrics
+    status_file = "./jira_management/status.json"
+    jira_info = {}
+    if os.path.exists(status_file):
+        try:
+            with open(status_file, "r", encoding="utf-8") as f:
+                jira_info = json.load(f)
+        except Exception:
+            pass
+
+    # Dynamic Jira Metrics
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Project Name", "College RAG")
-    col2.metric("Project Key", "RAG")
-    col3.metric("Total Epics", "6 Epics")
-    col4.metric("Backlog Items", "22 Items")
-    col5.metric("Total Story Points", "90 SP")
+    col1.metric("Project Name", jira_info.get("project_name", "College RAG Assistant"))
+    col2.metric("Project Key", jira_info.get("project_key", "RAG"))
+    col3.metric("Total Epics", f"{len(jira_info.get('epics', []))} Epics")
+    col4.metric("Current Sprint", jira_info.get("current_sprint", "Sprint 4"))
+    col5.metric("Story Points", f"{jira_info.get('total_story_points', 90)} SP")
 
     st.markdown("#### 🚀 Jira Workflow State")
     st.code("TO DO  ➡️  IN PROGRESS  ➡️  CODE REVIEW  ➡️  TESTING  ➡️  DONE", language="text")
 
-    # Epics overview
-    epics_data = [
-        {"Epic ID": "EPIC-1", "Name": "Requirements and Dataset", "Status": "DONE", "Story Points": 11},
-        {"Epic ID": "EPIC-2", "Name": "LLM & Cloud Setup", "Status": "DONE", "Story Points": 10},
-        {"Epic ID": "EPIC-3", "Name": "RAG Pipeline & Claude AI", "Status": "DONE", "Story Points": 42},
-        {"Epic ID": "EPIC-4", "Name": "User Interface & Cloud Hosting", "Status": "DONE", "Story Points": 13},
-        {"Epic ID": "EPIC-5", "Name": "Testing and Evaluation", "Status": "DONE", "Story Points": 15},
-        {"Epic ID": "EPIC-6", "Name": "Documentation and Demonstration", "Status": "IN PROGRESS", "Story Points": 5},
-    ]
+    # Epics overview loaded dynamically
+    epics_data = jira_info.get("epics", [
+        {"epic_id": "EPIC-1", "name": "Requirements and Dataset", "status": "DONE", "story_points": 11},
+        {"epic_id": "EPIC-2", "name": "LLM & Cloud Setup", "status": "DONE", "story_points": 10},
+        {"epic_id": "EPIC-3", "name": "RAG Pipeline & Claude AI", "status": "DONE", "story_points": 42},
+        {"epic_id": "EPIC-4", "name": "User Interface & Cloud Hosting", "status": "IN PROGRESS", "story_points": 13},
+        {"epic_id": "EPIC-5", "name": "Testing and Evaluation", "status": "IN PROGRESS", "story_points": 15},
+        {"epic_id": "EPIC-6", "name": "Documentation and Demonstration", "status": "IN PROGRESS", "story_points": 5},
+    ])
     st.dataframe(pd.DataFrame(epics_data), use_container_width=True)
 
     st.markdown("#### 📅 Sprint Breakdown")

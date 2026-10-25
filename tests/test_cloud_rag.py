@@ -178,3 +178,166 @@ def test_in_memory_pdf_upload_and_indexing(tmp_path):
     assert ans["is_error"] is False
     assert len(ans["retrieved_chunks"]) >= 1
     assert ans["retrieved_chunks"][0]["source"] == "syllabi.pdf"
+
+
+def test_bedrock_claude_disabled_by_default():
+    from llm_service import BedrockClaudeLLMService
+    srv = BedrockClaudeLLMService(aws_access_key_id="test_key")
+    assert srv.is_enabled() is False
+    assert srv.is_available() is False
+    with pytest.raises(RuntimeError) as exc:
+        srv.generate_response("test prompt")
+    assert "disabled by default" in str(exc.value)
+
+
+def test_bedrock_claude_mocked():
+    from llm_service import BedrockClaudeLLMService
+    srv = BedrockClaudeLLMService(aws_access_key_id="test_key", is_enabled=True)
+    assert srv.is_available() is True
+
+    mock_client = MagicMock()
+    mock_client.converse.return_value = {
+        "output": {"message": {"content": [{"text": "Bedrock Claude answer with 75% attendance rule."}]}}
+    }
+    srv._client = mock_client
+    resp = srv.generate_response("prompt")
+    assert "75%" in resp
+
+
+def test_vertex_claude_disabled_by_default():
+    from llm_service import VertexClaudeLLMService
+    srv = VertexClaudeLLMService(project_id="test_project")
+    assert srv.is_enabled() is False
+    assert srv.is_available() is False
+    with pytest.raises(RuntimeError) as exc:
+        srv.generate_response("test prompt")
+    assert "disabled by default" in str(exc.value)
+
+
+def test_vertex_claude_mocked():
+    from llm_service import VertexClaudeLLMService
+    srv = VertexClaudeLLMService(project_id="test_project", is_enabled=True)
+    assert srv.is_available() is True
+
+    mock_block = MagicMock()
+    mock_block.type = "text"
+    mock_block.text = "Vertex Claude response: minimum credits required are 160."
+    mock_response = MagicMock()
+    mock_response.content = [mock_block]
+
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_response
+    srv._client = mock_client
+
+    resp = srv.generate_response("prompt")
+    assert "160" in resp
+
+
+def test_fallback_llm_chain():
+    from llm_service import FallbackLLMChain, BaseLLMService
+
+    class FailingRateLimitedLLM(BaseLLMService):
+        def is_available(self) -> bool:
+            return True
+        def generate_response(self, prompt: str, system_prompt=None) -> str:
+            raise RuntimeError("429 ResourceExhausted: rate limit reached")
+
+    class HealthySecondaryLLM(BaseLLMService):
+        def is_available(self) -> bool:
+            return True
+        def generate_response(self, prompt: str, system_prompt=None) -> str:
+            return "Answer from fallback secondary provider."
+
+    chain = FallbackLLMChain(providers=[
+        ("PrimaryFailing", FailingRateLimitedLLM()),
+        ("SecondaryHealthy", HealthySecondaryLLM())
+    ])
+
+    ans = chain.generate_response("test query")
+    assert "fallback secondary" in ans
+    assert chain.stats["fallbacks_triggered"] >= 1
+
+
+def test_mcp_server_tools_and_auth():
+    from mcp_server import DocuMindMCPServer
+
+    mock_rag = MagicMock()
+    mock_rag.retriever.retrieve.return_value = [
+        {"source": "test_doc.pdf", "page": 1, "similarity": 0.88, "text": "Extracted text"}
+    ]
+    mock_rag.answer_question.return_value = {
+        "answer": "Answered via MCP",
+        "sources": ["test_doc.pdf"],
+        "is_refusal": False
+    }
+
+    server = DocuMindMCPServer(auth_token="valid_token", rag_service=mock_rag)
+
+    # Unauthorized tests
+    search_unauth = server.search_documents("query", auth_token="wrong_token")
+    assert search_unauth["status"] == "error"
+    assert "Unauthorized" in search_unauth["message"]
+
+    ask_unauth = server.ask_documents("question", auth_token="wrong_token")
+    assert ask_unauth["status"] == "error"
+
+    # Authorized tests
+    search_ok = server.search_documents("attendance query", auth_token="valid_token")
+    assert search_ok["status"] == "success"
+    assert len(search_ok["results"]) == 1
+
+    ask_ok = server.ask_documents("attendance question", auth_token="valid_token")
+    assert ask_ok["status"] == "success"
+    assert "Answered via MCP" in ask_ok["answer"]
+
+    # Tool definitions
+    tools = server.list_tools()
+    assert len(tools) == 2
+    tool_names = [t["name"] for t in tools]
+    assert "search_documents" in tool_names
+    assert "ask_documents" in tool_names
+
+
+def test_rag_service_answer_caching():
+    rag = RAGService(llm_provider="mock", embed_provider="test", vector_provider="memory")
+    fake_chunk = [{
+        "id": "doc1", "text": "Library books must be returned in 14 days.",
+        "source": "lib.pdf", "page": 1, "chunk_index": 1
+    }]
+    vec = [[0.1] * 384]
+    rag.vector_store.add_chunks(fake_chunk, vec)
+
+    # First query (Cache Miss)
+    res1 = rag.answer_question("Library rules?")
+    assert res1["from_cache"] is False
+
+    # Second query (Cache Hit)
+    res2 = rag.answer_question("Library rules?")
+    assert res2["from_cache"] is True
+    metrics = rag.get_metrics()
+    assert metrics["cache_hits"] >= 1
+    assert metrics["cache_hit_rate"] > 0.0
+
+
+def test_retriever_deduplication():
+    from retriever import SemanticRetriever
+
+    mock_store = MagicMock()
+    # Return duplicate chunks from same document and page
+    mock_store.query_similar.return_value = [
+        {"source": "rules.pdf", "page": 1, "similarity": 0.95, "text": "Minimum attendance is 75% for all courses."},
+        {"source": "rules.pdf", "page": 1, "similarity": 0.92, "text": "Minimum attendance is 75% for all courses."},
+        {"source": "rules.pdf", "page": 2, "similarity": 0.85, "text": "Examination hall entry closes after 15 min."}
+    ]
+
+    mock_embed = MagicMock()
+    mock_embed.get_embedding.return_value = [0.1] * 384
+
+    retriever = SemanticRetriever(vector_store=mock_store, embedder=mock_embed)
+    retrieved = retriever.retrieve("Attendance rule?", top_k=3)
+
+    # Duplicates should be filtered out
+    assert len(retrieved) == 2
+    pages = [r["page"] for r in retrieved]
+    assert pages == [1, 2]
+
