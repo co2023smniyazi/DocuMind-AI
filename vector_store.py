@@ -12,21 +12,138 @@ import os
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 import uuid
 import hashlib
+import re
+from urllib.parse import urlparse
 from typing import List, Dict, Any, Optional, Tuple
 from abc import ABC, abstractmethod
 
 
+def sanitize_secret_text(text: str, *secrets: Optional[str]) -> str:
+    """
+    Strips raw secrets and tokens from error messages and logs to prevent leaks.
+    """
+    if not text:
+        return ""
+    sanitized = str(text)
+    for s in secrets:
+        if s and len(str(s).strip()) >= 4:
+            clean_s = str(s).strip()
+            sanitized = sanitized.replace(clean_s, "***REDACTED***")
+    sanitized = re.sub(
+        r'(?:api[-_]?key[:=]\s*[\'"]?)([0-9A-Za-z_\-]{8,})',
+        r'api_key=***REDACTED***',
+        sanitized,
+        flags=re.IGNORECASE
+    )
+    sanitized = re.sub(
+        r'Illegal header value b[\'"][^\'"]+[\'"]',
+        'Illegal header value (whitespace or newline in secret)',
+        sanitized
+    )
+    return sanitized
+
+
+def validate_and_sanitize_qdrant_url(raw_url: Optional[str]) -> str:
+    """
+    Validates and sanitizes Qdrant URL.
+    Accepts only plain HTTPS endpoints (or http://localhost / :memory: for local testing).
+    Strips accidental surrounding whitespace, quotes, and parses/resolves Markdown links.
+    Raises ValueError on malformed or non-HTTPS URLs.
+    """
+    if not raw_url:
+        return ""
+    s = str(raw_url).strip()
+    if s == ":memory:":
+        return ":memory:"
+
+    # 1. Check and extract URL from Markdown link pattern e.g. [title](https://...)
+    md_match = re.search(r'\[.*?\]\((https?://[^\s\)\"\']+)\)', s)
+    if md_match:
+        s = md_match.group(1).strip()
+    else:
+        # Check if wrapped in brackets e.g. [https://...] or <https://...>
+        bracket_match = re.search(r'[\[<](https?://[^\]>]+)[\]>]', s)
+        if bracket_match:
+            s = bracket_match.group(1).strip()
+
+    # 2. Strip surrounding quotes, backticks, whitespace, newlines, carriage returns
+    s = s.strip("\"'` \t\r\n").rstrip("/")
+
+    # 3. Validate scheme and hostname
+    parsed = urlparse(s)
+    if not parsed.scheme or parsed.scheme not in ("https", "http"):
+        raise ValueError(
+            f"Invalid QDRANT_URL scheme: '{parsed.scheme}'. "
+            "Qdrant Cloud requires a valid plain HTTPS endpoint (e.g. 'https://your-cluster-id.region.aws.cloud.qdrant.io'), "
+            "not a Markdown link or non-HTTPS protocol."
+        )
+
+    if not parsed.netloc:
+        raise ValueError(
+            "Invalid QDRANT_URL: Missing host or domain name. "
+            "Please provide a plain HTTPS endpoint (e.g. 'https://your-cluster-id.region.aws.cloud.qdrant.io')."
+        )
+
+    # 4. Check for illegal characters or lingering Markdown artifacts
+    if any(ch in s for ch in "[]()<> \r\n\t"):
+        raise ValueError(
+            "Invalid QDRANT_URL: Contains illegal characters or unparsed Markdown link formatting. "
+            "Please provide a clean plain HTTPS URL."
+        )
+
+    return s
+
+
+def sanitize_qdrant_api_key(raw_key: Optional[str]) -> Optional[str]:
+    """
+    Sanitizes Qdrant API key by removing accidental surrounding/internal whitespace,
+    newlines, and quotes. Ensures the token is clean ASCII to prevent httpx.LocalProtocolError.
+    """
+    if not raw_key:
+        return None
+    k = str(raw_key).strip().strip("\"'`").strip()
+    k = "".join(k.split())
+    if not k:
+        return None
+    try:
+        k.encode("ascii")
+    except UnicodeEncodeError:
+        raise ValueError("Invalid QDRANT_API_KEY: Key contains non-ASCII characters.")
+    return k
+
+
 def get_secret(key: str, default: Optional[str] = None) -> Optional[str]:
-    val = os.environ.get(key)
-    if val:
-        return val
+    # 1. Check environment variables (exact, uppercase, lowercase)
+    for k in (key, key.upper(), key.lower()):
+        val = os.environ.get(k)
+        if val is not None:
+            cleaned = str(val).strip().strip("\"'`").strip()
+            if cleaned:
+                return cleaned
+
+    # 2. Check Streamlit secrets if running inside Streamlit
     try:
         import streamlit as st
-        if hasattr(st, "secrets") and key in st.secrets:
-            return st.secrets[key]
+        if hasattr(st, "secrets") and st.secrets is not None:
+            for k in (key, key.upper(), key.lower()):
+                if k in st.secrets and st.secrets[k] is not None:
+                    cleaned = str(st.secrets[k]).strip().strip("\"'`").strip()
+                    if cleaned:
+                        return cleaned
+            for section in ("qdrant", "gemini", "groq", "general"):
+                if section in st.secrets and isinstance(st.secrets[section], dict):
+                    sec_dict = st.secrets[section]
+                    sub_key = key.replace(f"{section.upper()}_", "").lower()
+                    for sk in (sub_key, key.lower(), key):
+                        if sk in sec_dict and sec_dict[sk] is not None:
+                            cleaned = str(sec_dict[sk]).strip().strip("\"'`").strip()
+                            if cleaned:
+                                return cleaned
     except Exception:
         pass
+
     return default
+
 
 
 class BaseVectorStore(ABC):
@@ -72,9 +189,12 @@ class QdrantCloudVectorStore(BaseVectorStore):
         embedding_dimension: int = 384,
         **kwargs
     ):
-        self.url = url or get_secret("QDRANT_URL", "")
-        self.api_key = api_key or get_secret("QDRANT_API_KEY", "")
-        self.collection_name = collection_name or get_secret("QDRANT_COLLECTION", "college_documents")
+        raw_u = url if url is not None else get_secret("QDRANT_URL", "")
+        raw_k = api_key if api_key is not None else get_secret("QDRANT_API_KEY", "")
+        self.url = validate_and_sanitize_qdrant_url(raw_u)
+        self.api_key = sanitize_qdrant_api_key(raw_k)
+        raw_coll = collection_name or get_secret("QDRANT_COLLECTION", "college_documents")
+        self.collection_name = str(raw_coll).strip().strip("\"'`").strip() or "college_documents"
         self.embedding_dimension = embedding_dimension
         self._known_sources: set = set()
         self._client = None
@@ -84,9 +204,12 @@ class QdrantCloudVectorStore(BaseVectorStore):
         if self._client is None:
             from qdrant_client import QdrantClient
             if self.url and self.url != ":memory:":
-                # Clean URL
-                clean_url = self.url.strip().rstrip("/")
-                self._client = QdrantClient(url=clean_url, api_key=self.api_key or None, timeout=10)
+                self._client = QdrantClient(
+                    url=self.url,
+                    api_key=self.api_key or None,
+                    timeout=15,
+                    check_compatibility=False
+                )
             else:
                 self._client = QdrantClient(":memory:")
         return self._client
@@ -130,14 +253,29 @@ class QdrantCloudVectorStore(BaseVectorStore):
                 )
             except Exception:
                 pass
+        except ValueError:
+            raise
         except Exception as e:
             err = str(e)
-            if "suspended" in err.lower() or "connection refused" in err.lower() or "connect" in err.lower():
+            low_err = err.lower()
+            clean_err = sanitize_secret_text(err, self.api_key)
+            if "401" in err or "403" in err or "forbidden" in low_err or "unauthorized" in low_err:
+                raise ConnectionError(
+                    "Qdrant Cloud authentication failed (HTTP 401/403). The provided QDRANT_API_KEY was rejected by your cluster. "
+                    "Please verify that your active API key in Qdrant Cloud console matches QDRANT_API_KEY in Streamlit Secrets."
+                ) from e
+            elif "responsehandlingexception" in low_err or "localprotocolerror" in low_err or "illegal header" in low_err:
+                raise ConnectionError(
+                    "Qdrant Cloud connection failed due to an HTTP protocol/header formatting error. "
+                    "Please verify that QDRANT_URL is a plain HTTPS endpoint without Markdown links and QDRANT_API_KEY contains no unexpected characters."
+                ) from e
+            elif any(term in low_err for term in ("suspended", "connection refused", "connect", "getaddrinfo failed", "timed out", "timeout")):
                 raise ConnectionError(
                     "Qdrant Cloud cluster is unreachable or has been suspended due to free-tier inactivity "
                     "(7 days without queries). Please log in to https://cloud.qdrant.io to resume the cluster."
                 ) from e
-            raise
+            else:
+                raise ConnectionError(f"Qdrant Cloud connection failed: {clean_err}") from e
 
     def add_chunks(self, chunks: List[Dict[str, Any]], embeddings: List[List[float]]) -> int:
         if not chunks or not embeddings:
@@ -231,43 +369,44 @@ class QdrantCloudVectorStore(BaseVectorStore):
         return self.add_chunks(chunks, embeddings)
 
     def get_stats(self) -> Dict[str, Any]:
-        self._ensure_collection()
-        client = self._get_client()
         try:
+            self._ensure_collection()
+            client = self._get_client()
             info = client.get_collection(collection_name=self.collection_name)
             pts_count = getattr(info, "points_count", 0) or 0
-        except Exception as e:
-            pts_count = 0
-            err_msg = str(e)
+
+            unique_docs = set(self._known_sources)
+            try:
+                records, _ = client.scroll(
+                    collection_name=self.collection_name,
+                    limit=1000,
+                    with_payload=["source"]
+                )
+                for rec in records:
+                    if rec.payload and "source" in rec.payload:
+                        unique_docs.add(rec.payload["source"])
+                self._known_sources.update(unique_docs)
+            except Exception:
+                pass
+
+            provider_name = "Qdrant Cloud Free Tier" if (self.url and self.url != ":memory:") else "Qdrant In-Memory"
             return {
-                "provider": "Qdrant Cloud (Error / Suspended)",
+                "provider": provider_name,
+                "total_chunks": pts_count,
+                "unique_documents": sorted(list(unique_docs)),
+                "collection_name": self.collection_name,
+                "endpoint": self.url or "in-memory"
+            }
+        except Exception as e:
+            clean_err = sanitize_secret_text(str(e), self.api_key)
+            return {
+                "provider": "Qdrant Cloud (Connection Error)",
                 "total_chunks": 0,
                 "unique_documents": [],
-                "error": err_msg
+                "collection_name": self.collection_name,
+                "endpoint": self.url or "in-memory",
+                "error": clean_err
             }
-
-        unique_docs = set(self._known_sources)
-        try:
-            records, _ = client.scroll(
-                collection_name=self.collection_name,
-                limit=1000,
-                with_payload=["source"]
-            )
-            for rec in records:
-                if rec.payload and "source" in rec.payload:
-                    unique_docs.add(rec.payload["source"])
-            self._known_sources.update(unique_docs)
-        except Exception:
-            pass
-
-        provider_name = "Qdrant Cloud Free Tier" if (self.url and self.url != ":memory:") else "Qdrant In-Memory"
-        return {
-            "provider": provider_name,
-            "total_chunks": pts_count,
-            "unique_documents": sorted(list(unique_docs)),
-            "collection_name": self.collection_name,
-            "endpoint": self.url or "in-memory"
-        }
 
     def reset_collection(self) -> None:
         client = self._get_client()

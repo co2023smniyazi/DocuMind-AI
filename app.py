@@ -97,21 +97,39 @@ if _v_prov == "qdrant" or (_is_cloud and _v_prov not in ["chroma", "memory"]):
             "1. In **share.streamlit.io** -> App Settings -> **Secrets**, configure:\n"
             "```toml\n"
             "VECTOR_PROVIDER = \"qdrant\"\n"
-            "QDRANT_URL = \"https://your-cluster-id.region.cloud.qdrant.io:6333\"\n"
+            "QDRANT_URL = \"https://your-cluster-id.region.aws.cloud.qdrant.io\"\n"
             "QDRANT_API_KEY = \"your-qdrant-api-key\"\n"
             "```\n"
             "*(For local offline development, set `VECTOR_PROVIDER = 'chroma'`)*"
         )
         st.stop()
+    else:
+        try:
+            from vector_store import validate_and_sanitize_qdrant_url, sanitize_qdrant_api_key
+            validate_and_sanitize_qdrant_url(_q_url)
+            sanitize_qdrant_api_key(_q_key)
+        except ValueError as val_err:
+            st.error(
+                f"🛑 **Blocking Configuration Error: Invalid Qdrant Cloud Format**\n\n"
+                f"**Details:** {val_err}\n\n"
+                "**Action Required in Streamlit Secrets:**\n"
+                "- Ensure `QDRANT_URL` is a plain HTTPS endpoint (e.g., `https://bc55f8d5-....cloud.qdrant.io`), not a Markdown link.\n"
+                "- Ensure `QDRANT_API_KEY` is pasted on a single line without quotes, whitespace, or newlines."
+            )
+            st.stop()
 
 
 @st.cache_resource(show_spinner=False)
 def get_cached_rag(provider: str):
     rag = RAGService(llm_provider=provider)
     stats = rag.get_stats()
-    if stats.get("total_chunks", 0) == 0 and os.path.exists("./data"):
-        rag.index_directory("./data")
+    if not stats.get("error") and stats.get("total_chunks", 0) == 0 and os.path.exists("./data"):
+        try:
+            rag.index_directory("./data")
+        except Exception as e:
+            print(f"Warning during directory indexing: {e}")
     return rag
+
 
 
 rag_service = get_cached_rag(st.session_state["llm_provider"])
@@ -240,6 +258,12 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 with tab1:
     st.markdown("#### Ask questions about college regulations, exams, placement, or campus conduct:")
 
+    if stats.get("error"):
+        st.warning(
+            f"⚠️ **Vector Database Warning:** {stats.get('error')}\n\n"
+            "*(Answers may be unavailable until Qdrant Cloud connectivity is restored.)*"
+        )
+
     # Quick test question presets
     presets = [
         "Select a sample question...",
@@ -333,15 +357,19 @@ with tab2:
         """, unsafe_allow_html=True)
 
     with col_c3:
+        vdb_err = stats.get("error")
+        vdb_status = "🔴 Error / Unreachable" if vdb_err else "🟢 Operational"
         st.markdown(f"""
         <div class="status-card">
             <h4>🗄️ Vector Database</h4>
             <p><b>Provider:</b> {stats.get('provider')}</p>
-            <p><b>Status:</b> 🟢 Operational</p>
+            <p><b>Status:</b> {vdb_status}</p>
             <p><b>Storage:</b> Payloads & Embeddings</p>
             <p><b>Chunks:</b> {stats.get('total_chunks', 0)} Indexed</p>
         </div>
         """, unsafe_allow_html=True)
+        if vdb_err:
+            st.error(f"⚠️ **Vector Database Warning:** {vdb_err}")
 
     st.markdown("#### 📋 Integration Matrix")
     integration_matrix = [

@@ -15,15 +15,36 @@ from abc import ABC, abstractmethod
 
 
 def get_secret(key: str, default: Optional[str] = None) -> Optional[str]:
-    val = os.environ.get(key)
-    if val:
-        return val
+    # 1. Check environment variables (exact match, uppercase, lowercase)
+    for k in (key, key.upper(), key.lower()):
+        val = os.environ.get(k)
+        if val is not None:
+            cleaned = str(val).strip().strip("\"'`").strip()
+            if cleaned:
+                return cleaned
+
+    # 2. Check Streamlit secrets if running inside Streamlit
     try:
         import streamlit as st
-        if hasattr(st, "secrets") and key in st.secrets:
-            return st.secrets[key]
+        if hasattr(st, "secrets") and st.secrets is not None:
+            for k in (key, key.upper(), key.lower()):
+                if k in st.secrets and st.secrets[k] is not None:
+                    cleaned = str(st.secrets[k]).strip().strip("\"'`").strip()
+                    if cleaned:
+                        return cleaned
+            # Nested table support (e.g. [qdrant] url = "...", [gemini] api_key = "...")
+            for section in ("qdrant", "gemini", "groq", "general"):
+                if section in st.secrets and isinstance(st.secrets[section], dict):
+                    sec_dict = st.secrets[section]
+                    sub_key = key.replace(f"{section.upper()}_", "").lower()
+                    for sk in (sub_key, key.lower(), key):
+                        if sk in sec_dict and sec_dict[sk] is not None:
+                            cleaned = str(sec_dict[sk]).strip().strip("\"'`").strip()
+                            if cleaned:
+                                return cleaned
     except Exception:
         pass
+
     return default
 
 

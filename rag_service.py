@@ -74,6 +74,7 @@ class RAGService:
         llm_type = self.llm_service.__class__.__name__
         embed_type = self.embedder.__class__.__name__
 
+        has_error = bool(stats.get("error"))
         return {
             "llm_service": llm_type,
             "llm_online": llm_ok,
@@ -83,7 +84,7 @@ class RAGService:
             "vector_store_provider": stats.get("provider", "ChromaDB"),
             "indexed_chunks": stats.get("total_chunks", 0),
             "indexed_documents": stats.get("unique_documents", []),
-            "all_healthy": bool(llm_ok and embed_ok)
+            "all_healthy": bool(llm_ok and embed_ok and not has_error)
         }
 
     def get_metrics(self) -> Dict[str, Any]:
