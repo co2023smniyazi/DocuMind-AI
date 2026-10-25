@@ -163,3 +163,4 @@ def test_get_secret_whitespace_and_case_insensitive(monkeypatch):
     # Case insensitive
     val_lower = get_secret("test_qdrant_url")
     assert val_lower == "https://my-cluster.qdrant.io"
+

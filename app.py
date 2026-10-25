@@ -10,6 +10,14 @@ import streamlit as st
 import pandas as pd
 from rag_service import RAGService
 from document_loader import load_pdf_with_metadata
+from vector_store import (
+    BaseVectorStore,
+    QdrantCloudVectorStore,
+    get_vector_store,
+    validate_and_sanitize_qdrant_url,
+    sanitize_qdrant_api_key,
+    sanitize_secret_text,
+)
 from llm_service import (
     ClaudeLLMService,
     OllamaLLMService,
@@ -105,7 +113,6 @@ if _v_prov == "qdrant" or (_is_cloud and _v_prov not in ["chroma", "memory"]):
         st.stop()
     else:
         try:
-            from vector_store import validate_and_sanitize_qdrant_url, sanitize_qdrant_api_key
             validate_and_sanitize_qdrant_url(_q_url)
             sanitize_qdrant_api_key(_q_key)
         except ValueError as val_err:
