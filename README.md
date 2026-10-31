@@ -227,3 +227,5 @@ python evaluate.py --allow-mock --embed-provider test --llm-provider mock --samp
   - `jira_management/jira_import.csv` (CSV ready for Jira Cloud import)
   - `jira_management/user_stories.md` (Acceptance criteria for RAG-6, RAG-10, RAG-11, RAG-14)
   - `jira_management/status.json` (Machine-readable velocity tracking displayed live in Streamlit UI)
+#   A I -  
+ 
